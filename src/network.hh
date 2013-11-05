@@ -38,11 +38,12 @@ public:
   const AdjMatrix &y() const { return _y; }
   AdjMatrix &y() { return _y; }
 #endif
+
   const SparseMatrix &sparse_y() const { return _sparse_y; }
   SparseMatrix &sparse_y() { return _sparse_y; }
   SparseMatrix &sparse_zeros() { return _sparse_zeros; }
-
   vector<uint32_t> *sparse_zeros(uint32_t a) const { return _sparse_zeros[a]; }
+  uint32_t curr_seq() const  { return _curr_seq; }
 
   uint32_t n() const;
 
@@ -82,6 +83,8 @@ public:
   void gt_gml(uint32_t cid, const vector<uint32_t> &ids);
   void gt_gml_seq(uint32_t cid, const vector<uint32_t> &ids);
   int load_gt_groups();
+  void load_heldout_sets(string fname, SampleMap &mp, uArray &ignore_npairs);
+
   const vector<uint32_t> *get_edges(uint32_t a) const;
 
   const IDMap &id2seq() const { return _id2seq; }

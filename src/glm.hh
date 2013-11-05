@@ -79,6 +79,7 @@ private:
   void estimate_pi();
   void assign_training_links();
   void shuffle_nodes();
+  void write_sample(FILE *f, SampleMap &mp);
 
   void opt_process(vector<uint32_t> &nodes, uint32_t &links, uint32_t &nonlinks,
 		   uint32_t &start_node);
@@ -110,16 +111,19 @@ private:
   double precision_likelihood(bool nostop=false);
   double link_prob(uint32_t p, uint32_t q, double &a1, double &a2,
 		   double &a3, double &a4) const;
-  void auc();
+  void write_rank();
+  void write_ranking_file();
   double validation_likelihood();
   double training_likelihood();
   int load_gamma();
   int load_only_gamma();
+  void load_nodes_for_precision();
 
   void get_random_edge(bool link, Edge &e) const;
   bool edge_ok(const Edge &e) const;
   void compute_and_log_groups();
   void write_communities(MapVec &communities, string name);
+  void write_nodemap(FILE *f, NodeMap &mp);
   void compute_mutual(string s);
   double find_max_k(uint32_t i, uint32_t j, 
 		    Array &pi_i, Array &pi_j, uint32_t &max_k);
@@ -129,7 +133,7 @@ private:
   void do_on_stop();
 
   Env &_env;
-  const Network &_network;
+  Network &_network;
 
   uint32_t _n;
   uint32_t _k;
@@ -194,6 +198,7 @@ private:
   time_t _start_time;
   FILE *_lf;
   FILE *_vf;
+  FILE *_pf;
   FILE *_hf;
   FILE *_trf;
   FILE *_hef;
@@ -211,6 +216,7 @@ private:
   EdgeList _precision_pairs;
   EdgeList _validation_pairs;
   EdgeList _training_pairs;
+  NodeMap _sampled_nodes;
 
   mutable uint32_t _nh;
   double _prev_h, _max_h;
@@ -236,6 +242,8 @@ private:
 
   ValueMap _vmap;
   CountMap _nvmap;
+  uArray _ignore_npairs;
+  bool _save_ranking_file;
 };
 
 //
@@ -417,9 +425,6 @@ GLMNetwork::edge_ok(const Edge &e) const
   if (v != _precision_map.end()) {
     return false;
   }
-  //if (v != _precision_map.end() && _network.y(e.first, e.second) == 1) {
-  //return false;
-  //}
   return true;
 }
 

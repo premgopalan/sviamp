@@ -5,24 +5,25 @@ use warnings;
 use Getopt::Long;
 
 my $bmark_bin = "/usr/local/bin/benchmark";
-my $infer_bin = "/disk/scratch1/prem/pnas2/infer";
-my $glm_bin = "/disk/scratch1/prem/glmnew/infer";
+my $svinet_bin = "/disk/scratch1/prem/svip_project/src/svinet";
+my $glm_bin = "/disk/scratch1/prem/nodepop/src/nodepop";
 my $em_bin = "/disk/scratch1/prem/em/infer";
 my $glm_script = "/disk/scratch1/prem/scripts/runglm.pl";
+my $eval_bin = "/disk/scratch1/prem/bayesianBKN/c++/svip-0.1/src/eval";
 my $F;
 my $file = 0;
 my $findk = 0;
-my $datasets_dir = "/disk/scratch1/prem/glmnew/datasets";
+my $datasets_dir = "/disk/scratch1/prem/nodepop/datasets";
 my $seed = 2;
 
-my @datasets = ("ca-AstroPh.csv",
-		"ca-GrQc.csv",
-		"ca-HepPh.csv",
-		"ca-HepTh.csv",
-		"cond-mat-2005.csv",
-		"loc-brightkite_edges.csv",
-		"netscience.csv",
-		"usair.csv");
+my @datasets = ("ca-AstroPh",
+		"ca-GrQc",
+		"ca-HepPh",
+		"ca-HepTh",
+		"cond-mat-2005",
+		"loc-brightkite_edges",
+		"netscience",
+		"usair");
 my %fixedK = ();
 my %hol = ();
 
@@ -44,6 +45,7 @@ sub main() {
     my $checkall = 0;
     my $dataset = "";
     my $em = 0;
+    my $gensets = 0;
 
     GetOptions ('file' => \$file,
 		'synthetic' => \$synthetic,
@@ -61,11 +63,15 @@ sub main() {
 		'seed=i' => \$seed,
 		'em' => \$em,
 		'label=s' => \$LABEL,
-		'noload' => \$noload);
+		'noload' => \$noload,
+		'gensets' => \$gensets);
     
     open($F, ">cmds.txt");
-    
-    if ($synthetic) {
+
+    init();
+    if ($gensets) {
+	gensets();
+    } elsif ($synthetic) {
 	run_synthetic($mu, $mscale);
     } elsif ($all) {
 	run_all();
@@ -92,35 +98,48 @@ sub main() {
 
 sub init()
 {
-    $nodes{"ca-AstroPh.csv"} = 17903;
-    $nodes{"ca-GrQc.csv"} = 4158;
-    $nodes{"ca-HepPh.csv"} = 11204;
-    $nodes{"ca-HepTh.csv"} = 8638;
-    $nodes{"cond-mat-2005.csv"} = 36458;
-    $nodes{"loc-brightkite_edges.csv"} = 56739;
-    $nodes{"netscience.csv"}  = 1461;
-    $nodes{"usair.csv"} = 712;
-    $nodes{"nslcc.csv"} = 379;
+    $nodes{"ca-AstroPh"} = 17903;
+    $nodes{"ca-GrQc"} = 4158;
+    $nodes{"ca-HepPh"} = 11204;
+    $nodes{"ca-HepTh"} = 8638;
+    $nodes{"cond-mat-2005"} = 36458;
+    $nodes{"loc-brightkite_edges"} = 56739;
+    $nodes{"netscience"}  = 1461;
+    $nodes{"usair"} = 712;
+    $nodes{"nslcc"} = 379;
 
-    $fixedK{"ca-AstroPh.csv"} = 100;
-    $fixedK{"ca-GrQc.csv"} = 100;
-    $fixedK{"ca-HepPh.csv"} = 100;
-    $fixedK{"ca-HepTh.csv"} = 100;
-    $fixedK{"cond-mat-2005.csv"} = 100;
-    $fixedK{"loc-brightkite_edges.csv"} = 100;
-    $fixedK{"netscience.csv"}  = 50;
-    $fixedK{"usair.csv"} = 20;
-    $fixedK{"nslcc.csv"} = 20;
+    $fixedK{"ca-AstroPh"} = 100;
+    $fixedK{"ca-GrQc"} = 100;
+    $fixedK{"ca-HepPh"} = 100;
+    $fixedK{"ca-HepTh"} = 100;
+    $fixedK{"cond-mat-2005"} = 100;
+    $fixedK{"loc-brightkite_edges"} = 100;
+    $fixedK{"netscience"}  = 50;
+    $fixedK{"usair"} = 20;
+    $fixedK{"nslcc"} = 20;
 
-    $hol{"ca-AstroPh.csv"} = 0.01;
-    $hol{"ca-GrQc.csv"} = 0.01;
-    $hol{"ca-HepPh.csv"} = 0.01;
-    $hol{"ca-HepTh.csv"} = 0.01;
-    $hol{"cond-mat-2005.csv"} = 0.01;
-    $hol{"loc-brightkite_edges.csv"} = 0.01;
-    $hol{"netscience.csv"}  = 0.1;
-    $hol{"usair.csv"} = 0.1;
-    #$hol{"nslcc.csv"} = 0.1;
+    $hol{"ca-AstroPh"} = 0.01;
+    $hol{"ca-GrQc"} = 0.01;
+    $hol{"ca-HepPh"} = 0.01;
+    $hol{"ca-HepTh"} = 0.01;
+    $hol{"cond-mat-2005"} = 0.01;
+    $hol{"loc-brightkite_edges"} = 0.01;
+    $hol{"netscience"}  = 0.1;
+    $hol{"usair"} = 0.1;
+    #$hol{"nslcc"} = 0.1;
+}
+
+sub gensets()
+{
+    my $cmd_fmt = "$eval_bin -gen-heldout -file %s -n %d -k %d -label sets";
+    foreach my $d (@datasets) {
+	my $cmd = sprintf $cmd_fmt, "$d.csv", $nodes{$d}, $fixedK{$d};
+	print "CMD = $cmd\n";
+	system($cmd);
+	$cmd = sprintf "rm -rf $d; mv n%d-k%d-sets $d", $nodes{$d}, $fixedK{$d};
+	system($cmd);
+	print "CMD = $cmd\n";
+    }
 }
 
 
@@ -128,8 +147,8 @@ sub run_all_datasets()
 {
   LOOP:
     foreach my $d (@datasets) {
-	#if ($d eq "cond-mat-2005.csv" || 
-	#    $d eq "loc-brightkite_edges.csv") {
+	#if ($d eq "cond-mat-2005" || 
+	#    $d eq "loc-brightkite_edges") {
 	#    next LOOP;
 	#}
 	my $s = $skip ? "-skip" : "";
@@ -171,76 +190,23 @@ sub run_real($)
     my $dir = "r$seed-$f";
 
     my $cmd = "";
-    if (!$skip) {
-	$cmd = "mkdir -p $dir; cd $dir; ".
-	    "$infer_bin -file $file -n $N -k $N -fastinit ".
-	    " 2>&1 >> inf.out";
-	print $cmd;
-	run($cmd);
-    }
-
-    #$cmd = "cd out-$f; wc -l n$N-k$N-mmsb-fastinit-v5/communities.txt";
-    #my $K = getK(`$cmd`);
-
     my $K = $fixedK{$f};
     print "$f $K\n";
 
-    my $lt = 0;
-    my $opt = "";
-    if (!$uniform) {
-	$opt = " -nonuniform";
-    }
-    if (!$skip) {
-	my $h = $hol{$f};
-	$cmd = "cd $dir; ".
-	    "$infer_bin -file $file -n $N -k $K  -batch -annealing -rfreq 1".
-	    " -lt-min-deg $lt -link-thresh 0.9".
-	    " -max-iterations 100 $opt -heldout-ratio $h -seed $seed 2>&1 >> inf.out";
-	run($cmd);
-	
-	$cmd = "cd $dir/n$N-k$K-mmsb-batch-ann; ".
-	    "$infer_bin -file $file -n $N -k $K -batch -rfreq 1".
-	    " -lt-min-deg $lt -link-thresh 0.9".
-	    " -max-iterations 100 $opt -load 1 1 -heldout-ratio $h  -seed $seed 2>&1 >> inf.out";
-	run($cmd);
-    }
-
-    $opt = "-rnode";
-    my $rfreq = ($opt eq "-rnode") ? 10 : 1000;
-    if ($stratified_node_sampling) {
-	$opt = "-massive -onesonly";
-    } elsif ($informative_sampling) {
-	$rfreq = 1000;
-	$opt = "-massive -preprocess";
-	
-	$cmd = "cd $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch; ".
-	    "$glm_bin -file $file -n $N -k $K -glm $opt -max-iterations 100000 -load 1 1 ".
-	    " -lt-min-deg $lt -link-thresh 0.9 -label $seed".
-	    " 2>&1 >> inf.out";
-	run($cmd);
-	$cmd = "cd $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch; ".
-	    "mv n$N-k$K-$seed-massiveglm/neighbors.bin .";
-	run($cmd);
-	$opt = "-massive";
-    }
-
     my $label = $LABEL eq "" ? $seed : $LABEL;
+    $cmd = "cd $dir; ".
+	"$svinet_bin -dir $file -n $N -k $K -link-sampling -svip-mode -seed $seed".
+	" -label $label >> inf.out";
+    run($cmd);
+    
+    my $opt = "-rnode";
+    my $rfreq = ($opt eq "-rnode") ? 10 : 1000;
+
     #my $load = $noload ? "-load 1 1 -amm" : " -load 1 1 ";
     my $load = $noload ? "" : " -load 1 1 ";
-    $cmd = "cd $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch; ".
-	"$glm_bin -file $file -n $N -k $K -glm $opt $load".
-	" -lt-min-deg $lt -link-thresh 0.9 -label $label -rfreq $rfreq -seed $seed -max-iterations 100000".
-	" 2>&1 >> inf.out &";
+    $cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin -dir $file -n $N -k $K -glm $opt $load".
+	" -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
     run($cmd);
-	
-    $cmd = "cd $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch; ".
-	"$glm_bin -file $file -n $N -k $K -glm $opt  -load 1 1 ".
-	" -lt-min-deg $lt -link-thresh 0.9 -label $seed -rfreq $rfreq -seed $seed".
-	" -nolambda 2>&1 >> inf.out &";
-    # XXXXX
-    #run($cmd);
-
-    run_real_em($f);
 }
 
 sub run_all()
@@ -322,7 +288,7 @@ sub run_synthetic($$)
     my $file = "network.dat";
 
     my $cmd = "cd $dir; ".
-	"$infer_bin -file $file -n $N -k $N -fastinit ".
+	"$svinet_bin -file $file -n $N -k $N -fastinit ".
 	" -nmi community.dat -bmark 2>&1 >> inf.out";
     run($cmd);
 
@@ -334,13 +300,13 @@ sub run_synthetic($$)
     my $K = getK(`$cmd`);
     
     $cmd = "cd $dir; ".
-	"$infer_bin -file $file -n $N -k $K  -batch -annealing -rfreq 1".
+	"$svinet_bin -file $file -n $N -k $K  -batch -annealing -rfreq 1".
 	" -lt-min-deg $lt -link-thresh 0.9".
 	" -max-iterations 100 -nmi community.dat -bmark 2>&1 >> inf.out";
     run($cmd);
 
     $cmd = "cd $dir/n$N-k$K-mmsb-batch-ann; ".
-	"$infer_bin -file ../$file -n $N -k $K -batch -rfreq 1".
+	"$svinet_bin -file ../$file -n $N -k $K -batch -rfreq 1".
 	" -lt-min-deg $lt -link-thresh 0.9".
 	" -max-iterations 100 -load 1 1 -nmi ../community.dat -bmark 2>&1 >> inf.out";
     run($cmd);
@@ -412,7 +378,9 @@ sub check_synthetic($$$)
 
 sub run($) {
     my $a = shift @_;
-    #print "CMD = $a\n";
+    print "CMD = $a\n";
+    return 0;
+    
     print $F "CMD = $a\n";
     if (system($a) != 0) { 
 	print $F "$a failed\n";

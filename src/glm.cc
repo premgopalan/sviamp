@@ -21,7 +21,6 @@ GLMNetwork::GLMNetwork(Env &env, Network &network)
     _sigma_beta(0.5),
     _mut(_k), _sigma_betat(.0),
     _Elogpi(_n,_k), 
-    //    _rho(.0), _tau0(65536*2), _kappa(0.9), 
     _rho(.0), _tau0(65536), _kappa(0.5), 
     _murho(.0), _mutau0(65536*2), _mukappa(0.9),
     _noderhot(_n), _nodec(_n),
@@ -32,9 +31,11 @@ GLMNetwork::GLMNetwork(Env &env, Network &network)
     _links(1000000,2),
     _nlinks(0), _training_links(_n),
     _inf_epsilon(0.5), 
-    //_inf_epsilon(0.5),
     _noninf_setsize(100),
-    _shuffled_nodes(_n)
+    _shuffled_nodes(_n),
+    _ignore_npairs(_n),
+    _iter(0), 
+    _save_ranking_file(false)
 {
   if (!_env.onesonly)
     _inf_epsilon = 0.01;
@@ -143,6 +144,12 @@ GLMNetwork::GLMNetwork(Env &env, Network &network)
     exit(-1);
   }
 
+  _pf = fopen(Env::file_str("/precision.txt").c_str(), "w");
+  if (!_pf)  {
+    lerr("cannot open precision file:%s\n",  strerror(errno));
+    exit(-1);
+  }
+
 
   if (_env.model_load)  {
     if (!_env.amm)
@@ -179,11 +186,12 @@ GLMNetwork::GLMNetwork(Env &env, Network &network)
   shuffle_nodes();
   _start_time = time(0);
   //approx_log_likelihood();
+  set_dir_exp(_gamma, _Elogpi);
+
   heldout_likelihood();
   validation_likelihood();
   if (_env.log_training_likelihood)
     training_likelihood();
-  set_dir_exp(_gamma, _Elogpi);
 }
 
 int
@@ -274,61 +282,81 @@ GLMNetwork::load_gamma()
 void
 GLMNetwork::load_heldout_sets()
 {
-  uint32_t n = 0;
-  uint32_t a, b;
-  const IDMap &id2seq = _network.id2seq();
-  FILE *f = fopen("heldout-edges.txt", "r");
-  while (!feof(f)) {
-    if (fscanf(f, "%d\t%d\t%*s\n", &a, &b) < 0) {
-      fprintf(stderr, "error: cannot read heldout file\n");
-      exit(-1);
-    }
-    
-    IDMap::const_iterator i1 = id2seq.find(a);
-    IDMap::const_iterator i2 = id2seq.find(b);
-    
-    if ((i1 == id2seq.end()) || (i2 == id2seq.end())) {
-      fprintf(stderr, "error: id %d or id %d not found in original network\n", 
-	      a, b);
-      exit(-1);
-    }
-    Edge e(i1->second,i2->second);
-    Network::order_edge(_env, e);
-    _heldout_pairs.push_back(e);
-    _heldout_map[e] = true;
-    ++n;
-  }
-  Env::plog("loaded heldout pairs:", n);
-  fprintf(_hef, "%s\n", edgelist_s(_heldout_pairs).c_str());
-  fclose(_hef);
-  fclose(f);
+  _network.load_heldout_sets(_env.datdir + "/test.tsv", _precision_map, _ignore_npairs);
+  _network.load_heldout_sets(_env.datdir + "/validation.tsv", _heldout_map, _ignore_npairs);
+  load_nodes_for_precision();
+  Env::plog("curr_seq after all files loaded:", _network.curr_seq());
+  FILE *g = fopen(Env::file_str("/precision-pairs.txt").c_str(), "w");
+  write_sample(g, _precision_map);
+  fclose(g);
+  g = fopen(Env::file_str("/heldout-pairs.txt").c_str(), "w");
+  write_sample(g, _heldout_map);
+  fclose(g);
+}
 
-  n = 0;
-  f = fopen("precision-edges.txt", "r");
-  while (!feof(f)) {
-    if (fscanf(f, "%d\t%d\t%*s\n", &a, &b) < 0) {
-      fprintf(stderr, "error: cannot read precision file\n");
-      exit(-1);
-    }
-    
-    IDMap::const_iterator i1 = id2seq.find(a);
-    IDMap::const_iterator i2 = id2seq.find(b);
-    
-    if ((i1 == id2seq.end()) || (i2 == id2seq.end())) {
-      fprintf(stderr, "error: id %d or id %d not found in original network\n", 
-	      a, b);
-      exit(-1);
-    }
-    Edge e(i1->second,i2->second);
-    Network::order_edge(_env, e);
-    _precision_pairs.push_back(e);
-    _precision_map[e] = true;
-    ++n;
+void
+GLMNetwork::write_sample(FILE *f, SampleMap &mp)
+{
+  for (SampleMap::const_iterator i = mp.begin(); i != mp.end(); ++i) {
+    const Edge &p = i->first;
+    yval_t y = _network.y(p.first, p.second);
+    const IDMap &m = _network.seq2id();
+    IDMap::const_iterator pi = m.find(p.first);
+    IDMap::const_iterator qi = m.find(p.second);
+    assert (pi != m.end() && qi != m.end());
+    fprintf(f, "%d\t%d\t%d\n", pi->second, qi->second, y);
   }
-  Env::plog("loaded precision pairs:", n);
-  fprintf(_pef, "%s\n", edgelist_s(_precision_pairs).c_str());
-  fclose(_pef);
+  fflush(f);
+}
+
+
+
+void
+GLMNetwork::load_nodes_for_precision()
+{
+  string fname = _env.datdir + "/test_users.tsv";
+  FILE *f = fopen(fname.c_str(), "r");
+  if (!f) {
+    lerr("cannot open query nodes file :%s", strerror(errno));
+    exit(-1);
+  }
+  size_t nbytes = 10 * 1024 * 1024;
+  char *s = new char[nbytes];
+  char *my_string = (char *) malloc (nbytes);
+  size_t bytes_read = 0;
+
+  const IDMap &mp = _network.id2seq();  
+  uint32_t nread = 0;
+  while (!feof(f)) {
+    bytes_read = getline(&my_string, &nbytes, f);
+    if (bytes_read <= 0)
+      break;
+
+    if (sscanf(my_string, "%[^\n]s\n", s) < 0) {
+      printf("error: cannot read query nodes file\n");
+      exit(-1);
+    }
+
+    char *e;
+    char *p;
+    long u = 0;
+    for (p = s; ; p = e) {
+      u = strtol(p, &e, 10);
+      if (p == e)
+	break;
+
+      IDMap::const_iterator pi = mp.find(u);
+      assert (pi != mp.end());
+      _sampled_nodes[pi->second] = true;
+    }
+    nread++;
+  }
+  delete[] s;
   fclose(f);
+  Env::plog("read %d query nodes", nread);
+  FILE *g = fopen(Env::file_str("/saved_querynodes.txt").c_str(), "w");
+  write_nodemap(g, _sampled_nodes);
+  fclose(g);
 }
 
 void
@@ -346,6 +374,7 @@ GLMNetwork::~GLMNetwork()
   fclose(_vf);
   if (_env.log_training_likelihood)
     fclose(_trf);
+  fclose(_pf);
 }
 
 string
@@ -651,6 +680,7 @@ GLMNetwork::init_heldout()
 void
 GLMNetwork::randomnode_infer()
 {
+  Env::plog("random node infer", true);
   set_dir_exp(_gamma, _Elogpi);
   while (1) {
     //
@@ -686,8 +716,8 @@ GLMNetwork::randomnode_infer()
       if (!edges)
 	continue;
       
-      printf("start node = %d, %ld links", start_node, edges->size());
-      fflush(stdout);
+      //printf("start node = %d, %ld links", start_node, edges->size());
+      //fflush(stdout);
       
       for (uint32_t i = 0; i < edges->size(); ++i) {
 	uint32_t a = (*edges)[i];
@@ -731,8 +761,8 @@ GLMNetwork::randomnode_infer()
       }
       
       double scale = (_n - _network.deg(start_node)) / sample.size();
-      printf("start node = %d, scale = %f, sample size = %ld\n", 
-	     start_node, scale, sample.size());
+      //printf("start node = %d, scale = %f, sample size = %ld\n", 
+      //start_node, scale, sample.size());
       for (uint32_t i = 0; i < sample.size(); ++i) {
 	Edge e = sample[i];
 	assert (edge_ok(e));
@@ -754,7 +784,7 @@ GLMNetwork::randomnode_infer()
     }
       
     info("* links=%d\n", _network.deg(start_node));
-    printf("* mut=%s\n", _mut.s().c_str());
+    //printf("* mut=%s\n", _mut.s().c_str());
     debug("* sigma_thetat=%.5f\n", _sigma_thetat);
     debug("* sigma_betat=%.5f\n", _sigma_betat);    
 
@@ -810,8 +840,7 @@ GLMNetwork::randomnode_infer()
       printf("\niteration %d (skipped heldout %d)\n", _iter, c);
       estimate_pi();
       heldout_likelihood();
-      compute_and_log_groups();
-      do_on_stop();
+      write_ranking_file();
       if (_env.terminate) {
 	compute_and_log_groups();
 	do_on_stop();
@@ -820,245 +849,15 @@ GLMNetwork::randomnode_infer()
     }
   }
 }
-
-
-void
-GLMNetwork::randompair_infer()
-{
-  set_dir_exp(_gamma, _Elogpi);
-  while (1) {
-
-    if (_env.max_iterations && _iter > _env.max_iterations) {
-      printf("+ Quitting: reached max iterations.\n");
-      Env::plog("maxiterations reached", true);
-      _env.terminate = true;
-      do_on_stop();
-      exit(0);
-    }
-
-    //_nodes.clear();
-    EdgeList pairs;
-    do {
-      Edge e;
-      do {
-	e.first = gsl_rng_uniform_int(_r, _n);
-	e.second = gsl_rng_uniform_int(_r, _n);
-	Network::order_edge(_env, e);
-	assert(e.first == e.second || Network::check_edge_order(e));
-      } while (!edge_ok(e));
-      pairs.push_back(e);
-    } while (pairs.size() <= (double)_n/2);
-    
-    //
-    // L step
-    //
-    _gammat.zero();
-
-    _mut.zero();
-    _sigma_betat = .0;
-    _sigma_thetat = .0;
-    _lambdat.zero();
-
-    uint32_t c = 0;
-    for (EdgeList::const_iterator i = pairs.begin(); i != pairs.end(); ++i) {
-      uint32_t p = i->first;
-      uint32_t q = i->second;
-      
-      process(p,q);
-    }
-
-    double scale = _total_pairs / pairs.size();
-    // mut
-    for (uint32_t k = 0; k < _k; ++k)
-      _mut[k] = _mut[k] * scale + ((_mu0 - _mu[k]) / SQ(_sigma0)); // XXXXX
-
-    // lambda_n and gammat
-    for (uint32_t n = 0; n < _n; ++n) {
-      _lambdat[n] += (_mu1 -_lambda[n]) / SQ(_sigma1); // XXXXX
-      for (uint32_t k = 0; k < _k; ++k) {
-	_gammat.set(n, k, _gammat.at(n,k) * scale);
-	_gammat.add(n, k, _alpha[k] - _gamma.at(n,k));
-      }
-    }
-
-    // G step
-    _rho = pow(_tau0 + _iter, -1 * _kappa);
-    _murho = pow(_mutau0 + _iter, -1 * _mukappa);
-    
-    for (uint32_t n = 0; n < _n; ++n) {
-      for (uint32_t k = 0; k < _k; ++k)
-	_gamma.add(n, k, _rho * _gammat.at(n,k));
-      if (!_env.nolambda) {
-	//	_lambda[n] += _rho * _lambdat[n]; XXXXX
-      }
-    }
-    set_dir_exp(_gamma, _Elogpi);    
-
-    for (uint32_t k = 0; k < _k; ++k)
-      _mu[k] += _murho * _mut[k];
-
-    _iter++;
-    printf("\riteration %d", _iter);
-    fflush(stdout);
-    if (_iter % _env.reportfreq == 0) {
-      printf("\niteration %d (skipped heldout %d)\n", _iter, c);
-      estimate_pi();
-      heldout_likelihood();
-      compute_and_log_groups();
-      do_on_stop();
-      if (_env.terminate) {
-	compute_and_log_groups();
-	do_on_stop();
-	_env.terminate = false;
-      }
-    }
-  }
-}
-
-void
-GLMNetwork::randompair_infer_opt()
-{
-  set_dir_exp(_gamma, _Elogpi);
-
-  while (1) {
-
-    if (_env.max_iterations && _iter > _env.max_iterations) {
-      printf("+ Quitting: reached max iterations.\n");
-      Env::plog("maxiterations reached", true);
-      _env.terminate = true;
-      do_on_stop();
-      exit(0);
-    }
-
-    //_nodes.clear();
-    EdgeList pairs;
-    do {
-      Edge e;
-      do {
-	e.first = gsl_rng_uniform_int(_r, _n);
-	e.second = gsl_rng_uniform_int(_r, _n);
-	Network::order_edge(_env, e);
-	assert(e.first == e.second || Network::check_edge_order(e));
-      } while (!edge_ok(e));
-      pairs.push_back(e);
-    } while (pairs.size() <= (double)_n/2);
-    
-    //
-    // L step
-    //
-    _gammat.zero();
-
-    _mut.zero();
-    _sigma_betat = .0;
-    _sigma_thetat = .0;
-    _lambdat.zero();
-
-    uint32_t c = 0;
-    double s0 = .0, s1 = .0;
-    for (EdgeList::const_iterator i = pairs.begin(); i != pairs.end(); ++i) {
-      uint32_t p = i->first;
-      uint32_t q = i->second;
-
-      process(p,q);
-
-      yval_t y = _network.y(p,q);
-
-      //if (y == 0)
-      //s0 += exp(_lc.cached_log_XS());
-      //else
-      //s1 += exp(_lc.cached_log_XS());
-    }
-    
-    //printf("%d: (%d:%d) log_X=%f, log_XS=%f\n", y, p, q, log_X, log_XS);
-    //printf("0: %.3f\n", s0);
-    //printf("1: %.3f\n", s1);
-    debug("* links=%d\n", _network.deg(_start_node));
-    debug("* before: mut=%s\n", _mut.s().c_str());
-    debug("* sigma_thetat=%.5f\n", _sigma_thetat);
-    debug("* sigma_betat=%.5f\n", _sigma_betat);
-
-    double scale = _total_pairs / pairs.size();
-    // mut
-    for (uint32_t k = 0; k < _k; ++k)
-      _mut[k] = (_mut[k])  + ((_mu0 - _mu[k]) / SQ(_sigma0)); // XXX scale?
-    
-    // sigma_betat
-    _sigma_betat = - (scale * _sigma_betat);
-    debug("** sigma_betat=%.5f\n", _sigma_betat);    
-    
-    double v = (_k / _sigma_beta);
-    _sigma_betat += -(_k * _sigma_beta / SQ(_sigma0)) + v;
-
-    debug("*** sigma_betat=%.5f, _sigma_beta=%f, v=%f\n", _sigma_betat, _sigma_beta, SQ(_sigma0));
-
-    // lambda_n and gammat
-    for (uint32_t n = 0; n < _n; ++n) {
-    //for (BoolMap::const_iterator b = _nodes.begin(); b != _nodes.end(); ++b) {
-    //uint32_t n = b->first;
-      _lambdat[n] += (_mu1 -_lambda[n]) / SQ(_sigma1);
-      for (uint32_t k = 0; k < _k; ++k) {
-	_gammat.set(n, k, _gammat.at(n,k) * scale);
-	_gammat.add(n, k, _alpha[k] - _gamma.at(n,k));
-      }
-    }
-    
-    // sigma_theta
-    v = (_n / _sigma_theta);
-    _sigma_thetat = - (scale * _sigma_thetat);
-    _sigma_thetat += -(_n * _sigma_theta / SQ(_sigma1)) + v;
-
-    debug("* after: mut=%s\n", _mut.s().c_str());
-    debug("* sigma_thetat=%.5f\n", _sigma_thetat);
-    debug("* sigma_betat=%.5f\n", _sigma_betat);
-    debug("* lambdat=%s\n", _lambdat.s().c_str());
-
-    // G step
-    _rho = pow(_tau0 + _iter, -1 * _kappa);
-    _murho = pow(_mutau0 + _iter, -1 * _mukappa);
-    
-    for (uint32_t n = 0; n < _n; ++n) {
-      //for (BoolMap::const_iterator b = _nodes.begin(); b != _nodes.end(); ++b) {
-      //uint32_t n = b->first;
-      for (uint32_t k = 0; k < _k; ++k)
-	_gamma.add(n, k, _rho * _gammat.at(n,k));
-      if (!_env.nolambda)
-	_lambda[n] += _rho * _lambdat[n];
-    }
-    //_sigma_theta += _rho * _sigma_thetat;
-    for (uint32_t k = 0; k < _k; ++k)
-      _mu[k] += _murho * _mut[k];
-    //_sigma_beta += _rho * _sigma_betat;
-
-    debug("%d:GAMMA = %s\n", _iter, _gamma.s().c_str());
-    debug("%d:LAMBDA = %s\n", _iter, _lambda.s().c_str());
-    debug("%d:mu=%s\n", _iter, _mu.s().c_str());
-    tst("%d:sigma_theta = %.5f\n", _iter, _sigma_theta);
-    tst("%d:sigma_beta = %.5f\n", _iter, _sigma_beta);
-
-    _iter++;
-    printf("\riteration %d", _iter);
-    fflush(stdout);
-    if (_iter % _env.reportfreq == 0) {
-      printf("\niteration %d (skipped heldout %d)\n", _iter, c);
-      estimate_pi();
-      heldout_likelihood();
-      if (_env.terminate) {
-	compute_and_log_groups();
-	do_on_stop();
-	_env.terminate = false;
-      }
-    }
-  }
-}
-
-
 
 void
 GLMNetwork::do_on_stop()
 {
   save_model();
   precision_likelihood();
-  auc();
+  _save_ranking_file = true;
+  write_ranking_file();
+  _save_ranking_file = false;
   save_groups();
 }
 
@@ -1095,8 +894,6 @@ GLMNetwork::assign_training_links()
 void
 GLMNetwork::process(uint32_t p, uint32_t q, double scale)
 {
-  //printf("process %d,%d\n", p,q);
-  //fflush(stdout);
   yval_t y = _network.y(p,q);
 
   _lc.reset(p,q,y);
@@ -1119,6 +916,7 @@ GLMNetwork::process(uint32_t p, uint32_t q, double scale)
   
   const double ** const phid = _lc.phi().const_data();
   for (uint32_t k = 0; k < _k; ++k) {
+
 #ifdef GLOBAL_MU
     double u1 = log_X + _globalmu + SQ(_sigma_beta)/2; 
 #else
@@ -1608,13 +1406,12 @@ GLMNetwork::heldout_likelihood(bool nostop)
 
   for (SampleMap::const_iterator i = _heldout_map.begin();
        i != _heldout_map.end(); ++i) {
-    
     const Edge &e = i->first;
     uint32_t p = e.first;
     uint32_t q = e.second;
     assert (p != q);
 
-    yval_t y = _network.y(p,q);
+    yval_t y = i->second;
     double u = pair_likelihood2(p,q,y);
     s += u;
     k += 1;
@@ -1625,7 +1422,7 @@ GLMNetwork::heldout_likelihood(bool nostop)
       szeros += u;
       kzeros++;
     }
-    info("edge likelihood for (%d,%d) is %f\n", p,q,u);
+    debug("edge likelihood for (%d,%d) is %f\n", p,q,u);
   }
   double nshol = (_zeros_prob * (szeros / kzeros)) + (_ones_prob * (sones / kones));
   fprintf(_hf, "%d\t%d\t%.9f\t%d\t%.9f\t%d\t%.9f\t%d\t%.9f\t%.9f\t%.9f\n",
@@ -1691,7 +1488,7 @@ GLMNetwork::precision_likelihood(bool nostop)
     uint32_t q = e.second;
     assert (p != q);
 
-    yval_t y = _network.y(p,q);
+    yval_t y = i->second;
     double u = pair_likelihood2(p,q,y);
     s += u;
     k += 1;
@@ -1978,7 +1775,7 @@ GLMNetwork::pair_likelihood(uint32_t p, uint32_t q, yval_t y) const
   double s = .0;
   double u = .0;
   for (uint32_t k = 0; k < _k; ++k) {
-    u += (pi_p[k] * pi_q[k] * _mu[k]); 
+    u += (pi_p[k] * pi_q[k] * _mu[k]);
     s += pi_p[k] * pi_q[k];
   }
   u += _lambda[p] + _lambda[q];
@@ -1999,7 +1796,6 @@ GLMNetwork::pair_likelihood2(uint32_t p, uint32_t q, yval_t y) const
   
   estimate_pi(p, pi_p);
   estimate_pi(q, pi_q);
-
   debug("beta = %s\n", _beta.s().c_str());
   debug("lambda[%d] = %f\n", p, _lambda[p]);
   debug("lambda[%d] = %f\n", q, _lambda[q]);
@@ -2126,6 +1922,19 @@ GLMNetwork::compute_and_log_groups()
     compute_mutual("/communities.txt");
 }
 
+
+void
+GLMNetwork::write_nodemap(FILE *f, NodeMap &mp)
+{
+  for (NodeMap::const_iterator i = mp.begin(); i != mp.end(); ++i) {
+    uint32_t p = i->first;
+    const IDMap &m = _network.seq2id();
+    IDMap::const_iterator pi = m.find(p);
+    fprintf(f, "%d\n", pi->second);
+  }
+  fflush(f);
+}
+
 void
 GLMNetwork::compute_mutual(string s)
 {
@@ -2159,71 +1968,114 @@ GLMNetwork::find_max_k(uint32_t i, uint32_t j,
   return max / s;
 }
 
+
 void
-GLMNetwork::auc()
+GLMNetwork::write_ranking_file()
 {
-  FILE *f = fopen(Env::file_str("/auc.txt").c_str(), "w");
-  for (SampleMap::const_iterator i = _precision_map.begin();
-       i != _precision_map.end(); ++i) {
-    
-    const Edge &e = i->first;
-    const IDMap &m = _network.seq2id();
-    IDMap::const_iterator a = m.find(e.first);
-    IDMap::const_iterator b = m.find(e.second);
+  uint32_t topN_by_user = 100;
+  uint32_t c = 0;
 
-    uint32_t p = a->second;
-    uint32_t q = b->second;
-    assert (p != q);
-    
-    yval_t y = _network.y(e.first,e.second);
-    double a1 = 0, a2 = 0;
-    double l1 = 0, l2 = 0;
-    double u = link_prob(e.first, e.second, a1, a2, l1, l2);
+  FILE *f = fopen(Env::file_str("/ranking.tsv").c_str(), "w");
+  uint32_t ntest_pairs = 0;
+  printf("\n+ Precision  map size = %ld\n", _precision_map.size());
+  printf("\n+ Writing ranking file for %ld nodes in query file\n", 
+	 _sampled_nodes.size());
+  fflush(stdout);
 
-    uint32_t pdeg = _network.deg(e.first);
-    uint32_t qdeg = _network.deg(e.second);
+  double mhits10 = 0, mhits100 = 0;
+  uint32_t total_users = 0;
+  for (NodeMap::const_iterator itr = _sampled_nodes.begin();
+       itr != _sampled_nodes.end(); ++itr) {
+    KVArray mlist(_n);  
+    uint32_t n = itr->first;
+    for (uint32_t m = 0; m < _n; ++m) {
+      
+      if (n == m) {
+	mlist[m].first = m;
+	mlist[m].second = -1;
+	continue;
+      }
 
-    fprintf(f, "%d %.3f %d %d %d %d %.3f %.3f %.3f %.3f\n", 
-	    y, u, p, q, pdeg, qdeg, a1, a2, l1, l2);
+      Edge e(n,m);
+      Network::order_edge(_env, e);
+      //
+      // check that this pair e is either a test link or a 0 in training
+      // (however, validation links are also a 0 in training; we must skip them)
+      //
+      const SampleMap::const_iterator w = _precision_map.find(e);
+      if (w != _precision_map.end() || (w == _precision_map.end() && _network.y(n,m) == 0)) {
+	
+	const SampleMap::const_iterator v = _heldout_map.find(e);
+	if (v != _heldout_map.end()) {
+	  mlist[m].first = m;
+	  mlist[m].second = -1;
+	  continue;
+	}
+	
+	yval_t y = (w != _precision_map.end()) ? w->second : 0;
+	double a1 = 0, a2 = 0;
+	double l1 = 0, l2 = 0;
+	double u = link_prob(n,m, a1,a2,l1,l2);
+	mlist[m].first = m;
+	mlist[m].second = u;
+	ntest_pairs++;
+
+      } else {
+	mlist[m].first = m;
+	mlist[m].second = -1;
+      }
+    }
+
+    uint32_t hits10 = 0, hits100 = 0;
+    mlist.sort_by_value();
+    for (uint32_t j = 0; j < topN_by_user && j < mlist.size(); ++j) {
+      KV &kv = mlist[j];
+      uint32_t m = kv.first;
+      double pred = kv.second;
+
+      if (pred < 0)
+	continue;
+
+      uint32_t m2 = 0, n2 = 0;
+
+      IDMap::const_iterator it = _network.seq2id().find(n);
+      assert (it != _network.seq2id().end());
+	
+      IDMap::const_iterator mt = _network.seq2id().find(m);
+      assert (mt != _network.seq2id().end());
+      
+      m2 = mt->second;
+      n2 = it->second;
+
+      //printf("n = %d (%d), m = %d (%d), pred = %.5f \n", n2, n, m2, m, pred);
+      yval_t  actual_value = 0;
+      Edge e(n,m);
+      Network::order_edge(_env, e);
+      const SampleMap::const_iterator w = _precision_map.find(e);
+      if (w != _precision_map.end()) {
+	actual_value = w->second;
+	if (j < 10) {
+	  hits10++;
+	  hits100++;
+	} else if (j < 100) {
+	  hits100++;
+	}
+      }
+      if (_save_ranking_file)
+	fprintf(f, "%d\t%d\t%.5f\t%d\t%.5f\n", n2, m2, pred, 
+		actual_value, pair_likelihood2(n,m,actual_value));
+    }
+    mhits10 += (double)hits10 / 10;
+    mhits100 += (double)hits100 / 100;
+    total_users++;
+    printf("\r done %d", total_users);
   }
-  fclose(f);
-  /*
-  char cmd[1024];
-  sprintf(cmd, "/usr/local/bin/roc < %s >> %s",
-	  Env::file_str("/auc.txt").c_str(),
-	  Env::file_str("/auc-summary.txt").c_str());
-  if (system(cmd) < 0)
-    lerr("error spawning cmd %s:%s", cmd, strerror(errno));
-  sprintf(cmd, "/usr/local/bin/roc -plot < %s >> %s",
-	  Env::file_str("/auc.txt").c_str(),
-	  Env::file_str("/roc-curve.txt").c_str());
-  if (system(cmd) < 0)
-    lerr("error spawning cmd %s:%s", cmd, strerror(errno));
-  sprintf(cmd, "/usr/local/bin/roc -prec < %s >> %s",
-	  Env::file_str("/auc.txt").c_str(),
-	  Env::file_str("/precision-recall-curve.txt").c_str());
-  if (system(cmd) < 0)
-    lerr("error spawning cmd %s:%s", cmd, strerror(errno));
-  */
-
-  FILE *g = fopen(Env::file_str("/auc2.txt").c_str(), "w");
-  for (SampleMap::const_iterator i = _heldout_map.begin();
-       i != _heldout_map.end(); ++i) {
-    
-    const Edge &e = i->first;
-    uint32_t p = e.first;
-    uint32_t q = e.second;
-    assert (p != q);
-    
-    yval_t y = _network.y(p,q);
-    double a1=0, a2=0;
-    double l1 = 0, l2 = 0;
-    double u = link_prob(p,q,a1,a2,l1,l2);
-
-    fprintf(g, "%d %.3f\n", y, u);
-  }
-  fclose(g);
-
+  if (_save_ranking_file)
+    fclose(f);
+  fprintf(_pf, "%.5f\t%.5f\n", 
+	  (double)mhits10 / total_users, 
+	  (double)mhits100 / total_users);
+  fflush(_pf);
 }
 
 double

@@ -40,6 +40,7 @@ main(int argc, char **argv)
   bool run_gap = false;
   bool force_overwrite_dir = true;
   string datfname = "network.dat";
+  string datdir = "";
   bool gen = false, ppc = false, lcstats = false;
   bool gml = false;
   string label = "";
@@ -124,13 +125,13 @@ main(int argc, char **argv)
       fprintf(stdout, "+ online option set\n");
       online = true;
       batch = false;
-    } else if (strcmp(argv[i], "-file") == 0) {
+    } else if (strcmp(argv[i], "-dir") == 0) {
       if (i + 1 > argc - 1) {
 	fprintf(stderr, "+ insufficient arguments!\n");
 	exit(-1);
       }
-      datfname = string(argv[++i]);
-      fprintf(stdout, "+ using file %s\n", datfname.c_str());
+      datdir = string(argv[++i]);
+      fprintf(stdout, "+ using file %s\n", datdir.c_str());
     } else if (strcmp(argv[i], "-ppc") == 0) {
       ppc = true;
       fprintf(stdout, "+ ppc option\n");
@@ -313,6 +314,8 @@ main(int argc, char **argv)
     } 
     ++i;
   };
+
+  datfname = datdir + "/train.tsv";
   
   assert (!(batch && online));
   
@@ -321,7 +324,7 @@ main(int argc, char **argv)
 	  single, batch, stratified, 
 	  nodelay, rpair, rnode, load, adamic_adar,
 	  scale, disjoint,
-	  force_overwrite_dir, datfname, 
+	  force_overwrite_dir, datdir, 
 	  (ppc || gml), run_gap, gen, label, nthreads, itype, eta_type,
 	  nmi, ground_truth_fname, rfreq, 
 	  accuracy, stopthresh, infthresh, 
@@ -332,7 +335,7 @@ main(int argc, char **argv)
 	  lt_min_deg, lowconf, nolambda, nmemberships, ammopt, 
 	  onesonly, init_comm, init_comm_fname, node_scaling_on,
 	  lpmode, gtrim, fastinit, max_iterations);
-	  
+
   env_global = &env;
   Network network(env);
   if (network.read(datfname.c_str()) < 0) {

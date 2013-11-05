@@ -158,7 +158,7 @@ public:
   bool onesonly;
   bool terminate;
   
-  string datfname;
+  string datdir;
 
   // debug
   bool deterministic;
@@ -363,7 +363,7 @@ Env::Env(uint32_t N, uint32_t K, bool massive,
     onesonly(oo),
     terminate(false),
 
-    datfname(dfname),
+    datdir(dfname),
     deterministic(false),
 
     //gen
@@ -430,9 +430,9 @@ Env::Env(uint32_t N, uint32_t K, bool massive,
     sa << "k" << k;
     if (label != "")
       sa << "-" << label;
-    else if (datfname.length() > 3 && 
-	     datfname.find("mmsb_gen.dat") == string::npos) {
-      string q = datfname.substr(0,2);
+    else if (datdir.length() > 3 && 
+	     datdir.find("mmsb_gen.dat") == string::npos) {
+      string q = datdir.substr(0,2);
       if (q == "..")
 	q = "xx";
       sa << "-" << q;
@@ -581,12 +581,6 @@ Env::Env(uint32_t N, uint32_t K, bool massive,
     //plog("conv_nupdates", conv_nupdates);
     //plog("conv_thresh1", conv_thresh1);
     //plog("conv_thresh2", conv_thresh2);
-  }
-
-  if (!gen && !ppc) {
-    string ndatfname = file_str("/network.dat");
-    unlink(ndatfname.c_str());
-    assert (symlink(datfname.c_str(), ndatfname.c_str()) >= 0);
   }
   unlink(file_str("/mutual.txt").c_str());
   fprintf(stderr, "+ done initializing env\n");
