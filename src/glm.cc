@@ -157,12 +157,14 @@ GLMNetwork::GLMNetwork(Env &env, Network &network)
     else {
       assert(load_only_gamma() >= 0);
       init_heldout();
+      Env::plog("model load", false);
       //estimate_pi();
       //compute_and_log_groups();
     }
   } else {
     init_gamma();
     load_heldout_sets();
+    Env::plog("model load", false);
     //init_heldout();
   }
 
@@ -277,6 +279,7 @@ GLMNetwork::load_gamma()
 
   fclose(gammaf);
   load_heldout_sets();
+  Env::plog("model load", true);
 }
 
 void
@@ -952,150 +955,6 @@ void
 GLMNetwork::infer()
 {
   randomnode_infer();
-}
-
-void
-GLMNetwork::opt_process(vector<uint32_t> &nodes, uint32_t &links, uint32_t &nonlinks, 
-			uint32_t &start_node)
-{
-  start_node = gsl_rng_uniform_int(_r, _n);
-
-  set_dir_exp(start_node, _gamma, _Elogpi);
-  _gammat.zero(start_node);
-  _lambdat[start_node] = 0;
-  nodes.push_back(start_node);
-  
-  const vector<uint32_t> *edges = _network.get_edges(start_node);
-  if (!edges)
-    return;
-
-  for (uint32_t i = 0; i < edges->size(); ++i) {
-    uint32_t a = (*edges)[i];
-    
-    Edge e(start_node,a);
-    Network::order_edge(_env, e);
-    if (!edge_ok(e))
-      continue;
-
-    set_dir_exp(a, _gamma, _Elogpi);
-    _gammat.zero(a);
-    _lambdat[a] = 0;
-    nodes.push_back(a);
-    
-    uint32_t p = e.first;
-    uint32_t q = e.second;
-
-    assert (p != q);
-    yval_t y = get_y(p, q);
-    assert (y == 1);
-
-    process(p,q);
-    links++;
-  }
-
-  vector<uint32_t> *zeros = NULL;
-  if (!_env.onesonly)
-    zeros = _network.sparse_zeros(start_node);
-  
-  for (uint32_t i = 0; zeros && i < zeros->size(); ++i) {
-    uint32_t a = (*zeros)[i];
-    assert (a != start_node);
-    
-    yval_t y = get_y(start_node, a);
-    assert ((y & 0x01) == 0);
-    
-    Edge e(start_node,a);
-    Network::order_edge(_env, e);
-    if (!edge_ok(e))
-      continue;
-
-    set_dir_exp(a, _gamma, _Elogpi);
-    nodes.push_back(a);
-    _gammat.zero(a);
-    _lambdat[a] = 0;
-
-    uint32_t p = e.first;
-    uint32_t q = e.second;
-
-    process(p,q);
-    nonlinks++;
-  }
-}
-
-void
-GLMNetwork::opt_process_noninf(vector<uint32_t> &nodes, uint32_t &links, uint32_t &nonlinks,
-			       uint32_t &start_node)
-{
-  //printf("processed %d links, %d nonlinks\n", links, nonlinks);
-  //fflush(stdout);
-  start_node = gsl_rng_uniform_int(_r, _n);
-  set_dir_exp(start_node, _gamma, _Elogpi);
-  _gammat.zero(start_node);
-  _lambdat[start_node] = 0;
-  nodes.push_back(start_node);
-
-  NodeMap inf_map;
-  if (!_env.onesonly) {
-    const vector<uint32_t> *zeros = _network.sparse_zeros(_start_node);
-    if (zeros)
-      for (uint32_t i = 0; i < zeros->size(); ++i)
-	inf_map[(*zeros)[i]] = true;
-  }
-
-  vector<Edge> sample;
-  double v = (double)(gsl_rng_uniform_int(_r, _n)) / _noninf_setsize;
-  uint32_t q = ((int)v) * _noninf_setsize;
-  tst("\nq = %d, set size = %d\n", q, _noninf_setsize);
-
-  while (sample.size() < _noninf_setsize) {
-    uint32_t node = _shuffled_nodes[q];
-    if (node == _start_node) {
-      q = (q + 1) % _n;
-      continue;
-    }
-    
-    yval_t y = get_y(_start_node, node);
-    Edge e(_start_node, node);
-    Network::order_edge(_env, e);
-    if (y == 0 && edge_ok(e)) {
-      if (_env.onesonly) 
-	sample.push_back(e);
-      else {
-	NodeMap::iterator itr = inf_map.find(node);
-	if (!itr->second) {
-	  sample.push_back(e);
-	  tst("(%d,%d)\n", e.first, e.second);
-	}
-      }
-    }
-    q = (q + 1) % _n;
-  };
-
-  //printf("noninf sample size = %ld\n", sample.size());
-  //fflush(stdout);
-  for (uint32_t i = 0; i < sample.size(); ++i) {
-    Edge e = sample[i];
-    assert (edge_ok(e));
-
-    uint32_t p = e.first;
-    uint32_t q = e.second;
-    uint32_t a;
-    if (p != _start_node)
-      a = p;
-    else
-      a = q;
-
-    set_dir_exp(a, _gamma, _Elogpi);
-    nodes.push_back(a);
-    _gammat.zero(a);
-    _lambdat[a] = 0;
-
-    yval_t y = get_y(p, q);
-    assert (y == 0);
-
-    process(p,q);
-    nonlinks++;
-  }
 }
 
 void
