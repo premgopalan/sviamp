@@ -300,3 +300,179 @@ GLMNetwork::randompair_infer_opt()
 
 
 
+
+
+
+void
+GLMNetwork::informative_sampling_infer()
+{
+  while (1) {
+    
+    uint32_t links = 0, nonlinks = 0;
+    vector<uint32_t> nodes;
+    uint32_t type = gsl_ran_bernoulli(_r, _inf_epsilon);
+    
+    uint32_t start_node;
+    if (type == 0)
+      opt_process(nodes, links, nonlinks, start_node);
+    else // non-informative sets
+      opt_process_noninf(nodes, links, nonlinks, start_node);
+    
+    double scale = type == 0 ? 
+      (double)_n / 2 : ((double)_n * (double)_n) / (2 * _inf_epsilon * _noninf_setsize);
+    
+    for (uint32_t k = 0; k < _k; ++k)
+      _mut[k] = (_mut[k] * scale)  + ((_mu0 - _mu[k]) / SQ(_sigma0)); // XXX scale?
+    
+    for (uint32_t i = 0; i < nodes.size(); ++i) {
+      
+      uint32_t n = nodes[i];
+      if (!_env.nolambda)
+	_lambdat[n] += (_mu1 -_lambda[n]) / SQ(_sigma1);
+      
+      //_lambdat[n] += (_mu1 -_lambda[n]) / SQ(_sigma1);
+      for (uint32_t k = 0; k < _k; ++k) {
+	_gammat.set(n, k, _gammat.at(n,k) * scale);
+	_gammat.add(n, k, _alpha[k] - _gamma.at(n,k));
+      }
+      _nodec[n]++;
+    }
+    
+    // G step
+    _rho = pow(_tau0 + _iter, -1 * _kappa);
+
+    for (uint32_t i = 0; i < nodes.size(); ++i) {
+      uint32_t n = nodes[i];
+      _noderhot[n] = pow(_tau0 + _nodec[n], -1 * _kappa);
+      for (uint32_t k = 0; k < _k; ++k)
+	_gamma.add(n, k, _noderhot[n] * _gammat.at(n,k));
+      if (!_env.nolambda)
+	_lambda[n] += _noderhot[n] * _lambdat[n];
+      set_dir_exp(n, _gamma, _Elogpi);
+    }
+
+    if (_iter % _env.reportfreq == 0) {
+      _murho = pow(_mutau0 + _iter % _env.reportfreq, -1 * _mukappa);
+      for (uint32_t k = 0; k < _k; ++k)
+	_mu[k] += _murho * _mut[k] / _env.reportfreq;
+      _mut.zero();
+    }
+
+    _iter++;
+    printf("\riteration %d (links:%d,nonlinks:%d,nodes:%ld)", 
+	   _iter, links, nonlinks, nodes.size());
+    fflush(stdout);
+    if (_iter % _env.reportfreq == 0) {
+      printf("\niteration %d\n", _iter);
+      estimate_pi();
+      save_model();
+      //compute_and_log_groups();
+      heldout_likelihood();
+    }
+  }
+}
+
+
+void
+GLMNetwork::batch_infer()
+{
+  while (1) {
+    set_dir_exp(_gamma, _Elogpi);
+    _gammat.zero();
+    _mut.zero();
+    _sigma_betat = .0;
+    _sigma_thetat = .0;
+    _lambdat.zero();
+  
+    for (uint32_t p = 0; p < _n; ++p) 
+      for (uint32_t q = 0; q < _n; ++q)  {
+
+	if (p >= q)
+	  continue;
+
+	process(p,q);
+      }
+    
+    // mut
+    for (uint32_t k = 0; k < _k; ++k)
+      _mu[k] = _mu0 + SQ(_sigma0) * _mut[k];
+    
+    printf("mu %s\n", _mu.s().c_str());
+    fflush(stdout);
+    
+    // lambda_n
+    for (uint32_t n = 0; n < _n; ++n)  {
+      _lambda[n] = _mu1 + SQ(_sigma1) * _lambdat[n];
+      for (uint32_t k = 0; k < _k; ++k) 
+	_gamma.set(n, k, _alpha[k] + _gammat.at(n,k));
+    }
+    set_dir_exp(_gamma, _Elogpi);
+    _iter++;
+    
+    printf("iteration %d\n", _iter);
+    estimate_pi();
+    printf("logl=%f\n", approx_log_likelihood());
+    //save_groups();
+    save_model();
+    compute_and_log_groups();
+    heldout_likelihood();
+  }
+}
+
+void
+GLMNetwork::link_infer()
+{
+  assign_training_links();
+  printf("nlinks = %d\n", _nlinks);
+  fflush(stdout);
+  
+  set_dir_exp(_gamma, _Elogpi);
+  _gammat.zero();
+  _mut.zero();
+  _sigma_betat = .0;
+  _sigma_thetat = .0;
+  _lambdat.zero();
+  
+  const double **linksd = _links.const_data();
+  while (1) {
+    
+    for (uint32_t n = 0; n < _nlinks; ++n) {
+      
+      uint32_t p = linksd[n][0];
+      uint32_t q = linksd[n][1];
+      
+      process(p,q);
+      if (n % 100 == 0) {
+	printf("\rprocessed %d links", n);
+	fflush(stdout);
+      }
+    }
+    printf("\n");
+    
+    // mut
+    for (uint32_t k = 0; k < _k; ++k)
+      _mu[k] = _mu0 + SQ(_sigma0) * _mut[k];
+    
+    printf("mu %s\n", _mu.s().c_str());
+    fflush(stdout);
+    
+    // lambda_n
+    for (uint32_t n = 0; n < _n; ++n)  {
+      _lambda[n] = _mu1 + SQ(_sigma1) * _lambdat[n];
+      for (uint32_t k = 0; k < _k; ++k) 
+	_gamma.set(n, k, _alpha[k] + _gammat.at(n,k));
+    }
+    set_dir_exp(_gamma, _Elogpi);
+    _iter++;
+    
+    if (_iter % _env.reportfreq == 0) {
+      printf("iteration %d\n", _iter);
+      estimate_pi();
+      //printf("logl=%f\n", approx_log_likelihood());
+      //save_groups();
+      save_model();
+      compute_and_log_groups();
+      heldout_likelihood();
+    }
+  }
+}
