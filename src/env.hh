@@ -68,7 +68,8 @@ public:
       uint32_t nmemberships, bool ammopt, bool onesonly,
       bool init_comm, string init_comm_fname,
       bool node_scaling_on, bool lpmode,
-      bool gtrim, bool fastinit, uint32_t max_iterations);
+      bool gtrim, bool fastinit, uint32_t max_iterations,
+      bool globalmu, bool adagrad);
   ~Env() { fclose(_plogf); }
 
   static string prefix;
@@ -191,6 +192,9 @@ public:
   bool log_training_likelihood;
   uint16_t max_iterations;
 
+  bool globalmu;
+  bool adagrad;
+
   template<class T> static void plog(string s, const T &v);
   static string file_str(string fname);
 
@@ -275,7 +279,8 @@ Env::Env(uint32_t N, uint32_t K, bool massive,
 	 uint32_t lt_min_deg_opt, bool lc, bool nol,
 	 uint32_t nmem, bool ammopt, bool oo, bool init_comm,
 	 string init_comm_fname, bool nscaling, bool lpm,
-	 bool gtrim, bool fastinit, uint32_t max_itr)
+	 bool gtrim, bool fastinit, uint32_t max_itr,
+	 bool gmu, bool agrad)
   : n(N),
     k(K),
     t(2),
@@ -398,7 +403,9 @@ Env::Env(uint32_t N, uint32_t K, bool massive,
     lpmode(lpm),
     gammatrim(gtrim),
     log_training_likelihood(false),
-    max_iterations(max_itr)
+    max_iterations(max_itr),
+    globalmu(gmu),
+    adagrad(agrad)
 {
   assert (!(batch && (strat || rnode || rpair)));
 
@@ -471,6 +478,13 @@ Env::Env(uint32_t N, uint32_t K, bool massive,
       sa << "glm";
     if (glm2)
       sa << "glm2";
+
+    if (adagrad)
+      sa << "-agrad";
+
+    if (globalmu)
+      sa << "-gmu";
+
     if (pcp)
       sa << "pcp";
 

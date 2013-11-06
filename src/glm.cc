@@ -12,14 +12,14 @@ GLMNetwork::GLMNetwork(Env &env, Network &network)
     _mu0(0.0), _sigma0(1.0),
     _mu1(0.0), _sigma1(10.0),
     _ones(0), _y(_n,_n),
-    _gamma(_n,_k), _gammat(_n,_k), 
+    _gamma(_n,_k), _gammat(_n,_k), _gammat_ag(_n,_k),
     _lambda(_n),
     _sigma_theta(0.1),
     _lambdat(_n), _sigma_thetat(.0),
     _mu(_k),
     _globalmu(.0), _globalmut(.0),
     _sigma_beta(0.5),
-    _mut(_k), _sigma_betat(.0),
+    _mut(_k), _mut_ag(_k), _sigma_betat(.0),
     _Elogpi(_n,_k), 
     _rho(.0), _tau0(65536), _kappa(0.5), 
     _murho(.0), _mutau0(65536*2), _mukappa(0.9),
@@ -629,20 +629,21 @@ LocalCompute::update_phi()
 
   compute_X_and_XS(_p,_q);
   for (uint32_t k = 0; k < _k; ++k) { 
-#ifdef GLOBAL_MU    
-    double u1 = _log_X + globalmu + SQ(sigma_beta)/2;
-#else
-    double u1 = _log_X + mu[k] + SQ(sigma_beta)/2;
-#endif
+    double u1;
+    if (_env.globalmu)
+      u1 = _log_X + globalmu + SQ(sigma_beta)/2;
+    else
+      u1 = _log_X + mu[k] + SQ(sigma_beta)/2;
+
     double u2 = _log_X + epsilon;
     double u = exp(u1) - exp(u2);
     
     phid[k][k] = Elogpi.at(_p,k) + Elogpi.at(_q,k);
-#ifdef GLOBAL_MU
-    phid[k][k] += (_y * (globalmu - epsilon) - u);
-#else
-    phid[k][k] += (_y * (mu[k] - epsilon) - u);
-#endif
+
+    if (_env.globalmu)
+      phid[k][k] += (_y * (globalmu - epsilon) - u);
+    else
+      phid[k][k] += (_y * (mu[k] - epsilon) - u);
     debug("Elogpi(%d,%d) = %f\n", _p, k, Elogpi.at(_p,k));
   }
   for (uint32_t k1 = 0; k1 < _k ; ++k1)
@@ -683,6 +684,8 @@ GLMNetwork::init_heldout()
 void
 GLMNetwork::randomnode_infer()
 {
+  _mut_ag.zero();
+  _gammat_ag.zero();
   Env::plog("random node infer", true);
   set_dir_exp(_gamma, _Elogpi);
   while (1) {
@@ -796,6 +799,7 @@ GLMNetwork::randomnode_infer()
     for (uint32_t k = 0; k < _k; ++k) {
       _globalmut += _mut[k];
       _mut[k] = _mut[k] + ((_mu0 - _mu[k]) / SQ(_sigma0)); // XXXXX scaling
+      _mut_ag[k] += _mut[k] * _mut[k];
     }
     _globalmut += (_mu0 - _globalmu) / SQ(_sigma0);
 
@@ -804,26 +808,37 @@ GLMNetwork::randomnode_infer()
       uint32_t n = itr->first;
       _lambdat[n] += (_mu1 -_lambda[n]) / SQ(_sigma1);
       for (uint32_t k = 0; k < _k; ++k) {
-	_gammat.set(n, k, _gammat.at(n,k));
 	_gammat.add(n, k, _alpha[k] - _gamma.at(n,k));
+#ifdef GAMMA_ADAGRAD
+	if (_env.adagrad)
+	  _gammat_ag.add(n,k, _gammat.at(n,k) * _gammat.at(n,k));
+#endif
       }
 
       _rho = pow(_tau0 + _iter, -1 * _kappa);
       _murho = pow(_mutau0 + _iter, -1 * _mukappa);
 
-      for (uint32_t k = 0; k < _k; ++k)
-	_gamma.add(n, k, _rho * _gammat.at(n,k));
+      for (uint32_t k = 0; k < _k; ++k) {
+#ifdef GAMMA_ADAGRAD
+	if (_env.adagrad)
+	  _gamma.add(n, k, _gammat.at(n,k) / _gammat_ag.at(n,k));
+	else
+#endif
+	  _gamma.add(n, k, _rho * _gammat.at(n,k));
+      }
 
       if (!_env.nolambda)
 	_lambda[n] += _rho * _lambdat[n];
       set_dir_exp(n, _gamma, _Elogpi);
       
       for (uint32_t k = 0; k < _k; ++k) {
-	_mu[k] += _murho * _mut[k];
+	if (_env.adagrad)
+	  _mu[k] += _mut[k] / sqrt(_mut_ag[k]);
+	else
+	  _mu[k] += _murho * _mut[k];
+	
 	if (_mu[k] < .0)
 	  _mu[k] = .0;
-	//	else if (_mu[k] > 3.0)
-	//  _mu[k] = 3.0;
       }
       _globalmu += _murho * _globalmut;
       if (_globalmu < .0)
@@ -843,11 +858,23 @@ GLMNetwork::randomnode_infer()
       printf("\niteration %d (skipped heldout %d)\n", _iter, c);
       estimate_pi();
       heldout_likelihood();
-      write_ranking_file();
+
+      if (_iter % 100 == 0) {
+	precision_likelihood();
+	write_ranking_file();
+      }
+
       if (_env.terminate) {
 	compute_and_log_groups();
 	do_on_stop();
 	_env.terminate = false;
+      }
+      if (_iter % 1000 == 0) {
+	lerr("iteration:%d, save ranking file", _iter);
+	_save_ranking_file = true;
+	write_ranking_file();
+	_save_ranking_file = false;
+	lerr("done");
       }
     }
   }
@@ -919,12 +946,11 @@ GLMNetwork::process(uint32_t p, uint32_t q, double scale)
   
   const double ** const phid = _lc.phi().const_data();
   for (uint32_t k = 0; k < _k; ++k) {
-
-#ifdef GLOBAL_MU
-    double u1 = log_X + _globalmu + SQ(_sigma_beta)/2; 
-#else
-    double u1 = log_X + _mu[k] + SQ(_sigma_beta)/2;
-#endif
+    double u1;
+    if (_env.globalmu)
+      u1 = log_X + _globalmu + SQ(_sigma_beta)/2; 
+    else
+      u1 = log_X + _mu[k] + SQ(_sigma_beta)/2;
     _mut[k] += scale * phid[k][k] * (y - exp(u1));
     //printf("mut[%d] = %f\n", k, phid[k][k] * (y - exp(u1)));
   }
@@ -1482,11 +1508,11 @@ GLMNetwork::pair_likelihood2(uint32_t p, uint32_t q, yval_t y) const
   double s = .0;
   double u = .0, z = .0, r = .0, m = .0;
   for (uint32_t k = 0; k < _k; ++k)  {
-#ifdef GLOBAL_MU
-    u = _lambda[p] + _lambda[q] + _globalmu;
-#else
-    u = _lambda[p] + _lambda[q] + _mu[k];
-#endif
+    if (_env.globalmu)
+      u = _lambda[p] + _lambda[q] + _globalmu;
+    else
+      u = _lambda[p] + _lambda[q] + _mu[k];
+
     r = (double)1.0 / (1 + exp(-u));
     z = gsl_ran_bernoulli_pdf(y, r);
     s += z * pi_p[k] * pi_q[k];
@@ -1661,7 +1687,7 @@ GLMNetwork::write_ranking_file()
 	 _sampled_nodes.size());
   fflush(stdout);
 
-  double mhits10 = 0, mhits100 = 0;
+  double mhits10 = 0, mhits50 = 0, mhits100 = 0;
   uint32_t total_users = 0;
   for (NodeMap::const_iterator itr = _sampled_nodes.begin();
        itr != _sampled_nodes.end(); ++itr) {
@@ -1705,7 +1731,7 @@ GLMNetwork::write_ranking_file()
       }
     }
 
-    uint32_t hits10 = 0, hits100 = 0;
+    uint32_t hits10 = 0, hits100 = 0, hits50 = 0;
     mlist.sort_by_value();
     for (uint32_t j = 0; j < topN_by_user && j < mlist.size(); ++j) {
       KV &kv = mlist[j];
@@ -1735,24 +1761,29 @@ GLMNetwork::write_ranking_file()
 	actual_value = w->second;
 	if (j < 10) {
 	  hits10++;
+	  hits50++;
 	  hits100++;
-	} else if (j < 100) {
+	} else if (j < 50) {
+	  hits50++;
 	  hits100++;
-	}
+	} else if (j < 100)
+	  hits100++;
       }
       if (_save_ranking_file)
 	fprintf(f, "%d\t%d\t%.5f\t%d\t%.5f\n", n2, m2, pred, 
 		actual_value, pair_likelihood2(n,m,actual_value));
     }
     mhits10 += (double)hits10 / 10;
+    mhits50 += (double)hits50 / 50;
     mhits100 += (double)hits100 / 100;
     total_users++;
     printf("\r done %d", total_users);
   }
   if (_save_ranking_file)
     fclose(f);
-  fprintf(_pf, "%.5f\t%.5f\n", 
+  fprintf(_pf, "%.5f\t%.5f\t%.5f\n", 
 	  (double)mhits10 / total_users, 
+	  (double)mhits50 / total_users, 
 	  (double)mhits100 / total_users);
   fflush(_pf);
 }
@@ -1780,11 +1811,11 @@ GLMNetwork::link_prob(uint32_t p, uint32_t q,
   l2 = _lambda[q];
 
   for (uint32_t k = 0; k < _k; ++k)  {
-#ifdef GLOBAL_MU
-    u = _lambda[p] + _lambda[q]  + _globalmu;
-#else
-    u = _lambda[p] + _lambda[q]  + _mu[k];
-#endif
+    if (_env.globalmu)
+      u = _lambda[p] + _lambda[q]  + _globalmu;
+    else
+      u = _lambda[p] + _lambda[q]  + _mu[k];
+
     r = (double)1.0 / (1 + exp(-u));
     z = gsl_ran_bernoulli_pdf(1.0, r);
     s += z * pi_p[k] * pi_q[k];

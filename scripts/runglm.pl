@@ -8,7 +8,7 @@ my $bmark_bin = "/usr/local/bin/benchmark";
 my $svinet_bin = "/disk/scratch1/prem/svip_project/src/svinet";
 my $glm_bin = "/disk/scratch1/prem/nodepop/src/nodepop";
 my $em_bin = "/disk/scratch1/prem/em/infer";
-my $glm_script = "/disk/scratch1/prem/scripts/runglm.pl";
+my $glm_script = "/disk/scratch1/prem/nodepop/scripts/runglm.pl";
 my $eval_bin = "/disk/scratch1/prem/bayesianBKN/c++/svip-0.1/src/eval";
 my $F;
 my $file = 0;
@@ -34,6 +34,9 @@ my $skip = 0;
 my $uniform = 0;
 my $LABEL = "";
 my $noload = 0;
+my $adagrad = 0;
+my $globalmu = 0;
+my $allopt = 0;
 
 
 sub main() {
@@ -46,6 +49,7 @@ sub main() {
     my $dataset = "";
     my $em = 0;
     my $gensets = 0;
+
 
     GetOptions ('file' => \$file,
 		'synthetic' => \$synthetic,
@@ -64,7 +68,10 @@ sub main() {
 		'em' => \$em,
 		'label=s' => \$LABEL,
 		'noload' => \$noload,
-		'gensets' => \$gensets);
+		'gensets' => \$gensets,
+		'adagrad' => \$adagrad,
+		'globalmu' => \$globalmu,
+		'allopt' => \$allopt);
     
     open($F, ">cmds.txt");
 
@@ -85,7 +92,7 @@ sub main() {
 	    run_real($dataset);
 	}
     } elsif ($allreal) {
-	init();
+	print "running all datasets\n";
 	run_all_datasets();
     } elsif ($em) {
 	init();
@@ -147,12 +154,8 @@ sub run_all_datasets()
 {
   LOOP:
     foreach my $d (@datasets) {
-	#if ($d eq "cond-mat-2005" || 
-	#    $d eq "loc-brightkite_edges") {
-	#    next LOOP;
-	#}
 	my $s = $skip ? "-skip" : "";
-	my $cmd = "$glm_script -dataset $d -uniform -seed $seed $s -label $LABEL &";
+	my $cmd = "$glm_script -dataset $d -seed $seed -allopt &";
 	system($cmd);
     }
 }
@@ -194,19 +197,46 @@ sub run_real($)
     print "$f $K\n";
 
     my $label = $LABEL eq "" ? $seed : $LABEL;
-    $cmd = "cd $dir; ".
-	"$svinet_bin -dir $file -n $N -k $K -link-sampling -svip-mode -seed $seed".
-	" -label $label >> inf.out";
-    run($cmd);
+    if (!$skip) {
+	$cmd = "mkdir -p $dir; cd $dir; ".
+	    "$svinet_bin -dir $file -n $N -k $K -link-sampling -svip-mode -seed $seed".
+	    " -label $label -rfreq 10 >> inf.out";
+	run($cmd);
+    }
     
     my $opt = "-rnode";
     my $rfreq = ($opt eq "-rnode") ? 10 : 1000;
 
     #my $load = $noload ? "-load 1 1 -amm" : " -load 1 1 ";
     my $load = $noload ? "" : " -load 1 1 ";
-    $cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin -dir $file -n $N -k $K -glm $opt $load".
+
+    if (!$allopt) {
+	my $adagrad_str = !$adagrad ? "" : "-adagrad";
+	my $globalmu_str = !$globalmu ? "" : "-globalmu";
+	
+	$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
+	    "-dir $file -n $N -k $K -glm $opt $load ".
+	    " $adagrad_str $globalmu_str ".
 	" -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
-    run($cmd);
+	run($cmd);
+    } else {
+	$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
+	    "-dir $file -n $N -k $K -glm $opt $load ".
+	    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
+	run($cmd);
+
+	$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
+	    "-dir $file -n $N -k $K -glm $opt $load ".
+	    "  -adagrad ".
+	    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
+	run($cmd);
+
+	$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
+	    "-dir $file -n $N -k $K -glm $opt $load ".
+	    "  -globalmu ".
+	    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
+	run($cmd);
+    }
 }
 
 sub run_all()
@@ -379,7 +409,6 @@ sub check_synthetic($$$)
 sub run($) {
     my $a = shift @_;
     print "CMD = $a\n";
-    return 0;
     
     print $F "CMD = $a\n";
     if (system($a) != 0) { 

@@ -106,6 +106,9 @@ main(int argc, char **argv)
   double hol_ratio = 0.01;
   double rand_seed = 0;
 
+  bool globalmu = false;
+  bool adagrad = false;
+
   if (argc == 1) {
     usage();
     exit(-1);
@@ -308,6 +311,10 @@ main(int argc, char **argv)
     } else if (strcmp(argv[i], "-seed") == 0) {
       rand_seed = atof(argv[++i]);
       fprintf(stdout, "+ random seed set to %.5f\n", rand_seed);
+    } else if (strcmp(argv[i], "-globalmu") == 0) {
+      globalmu = true;
+    }  else if (strcmp(argv[i], "-adagrad") == 0) {
+      adagrad = true;
     } else {
       fprintf(stdout, "unknown option %s!", argv[i]);
       assert(0);
@@ -334,7 +341,7 @@ main(int argc, char **argv)
 	  acc, lcacc, ngscale, link_thresh,
 	  lt_min_deg, lowconf, nolambda, nmemberships, ammopt, 
 	  onesonly, init_comm, init_comm_fname, node_scaling_on,
-	  lpmode, gtrim, fastinit, max_iterations);
+	  lpmode, gtrim, fastinit, max_iterations, globalmu, adagrad);
 
   env_global = &env;
   Network network(env);

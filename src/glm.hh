@@ -21,7 +21,8 @@
 #define SQ(v) (v * v)
 #define CB(v) (v * v * v)
 
-//#define GLOBAL_MU 1
+#define GLOBAL_MU 1
+#define ADAGRAD 0
 
 class GLMNetwork;
 class LocalCompute {
@@ -162,6 +163,7 @@ private:
 
   Matrix _gamma;
   Matrix _gammat;
+  Matrix _gammat_ag;
 
   Array _lambda;
   double _sigma_theta;
@@ -175,6 +177,7 @@ private:
   double _sigma_beta;
 
   Array _mut;
+  Array _mut_ag;
   double _sigma_betat;
 
   Matrix _Elogpi;
