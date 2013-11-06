@@ -302,7 +302,7 @@ GLMNetwork::write_sample(FILE *f, SampleMap &mp)
 {
   for (SampleMap::const_iterator i = mp.begin(); i != mp.end(); ++i) {
     const Edge &p = i->first;
-    yval_t y = _network.y(p.first, p.second);
+    yval_t y = i->second;
     const IDMap &m = _network.seq2id();
     IDMap::const_iterator pi = m.find(p.first);
     IDMap::const_iterator qi = m.find(p.second);
@@ -860,8 +860,10 @@ GLMNetwork::randomnode_infer()
       heldout_likelihood();
 
       if (_iter % 100 == 0) {
+	lerr("iteration:%d, save precision", _iter);
 	precision_likelihood();
 	write_ranking_file();
+	lerr("done");
       }
 
       if (_env.terminate) {
