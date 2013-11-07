@@ -155,7 +155,7 @@ sub gensets()
 sub getresults()
 {
     my @dir = split ' ', `ls`;
-    my $repc = 3;
+    my $repc = 1;
     my %maprep = ();
     foreach my $d (@dir) {
 	if ($d =~ /r(\d+)-(\S+)/) {
@@ -173,7 +173,7 @@ sub getresults()
 	    #print $out;
 	    if ($out =~ /\d+\s+\d+\s+(\S+).*/) {
 		my $mmsb_hol = $1;
-		printf "%s\t%d\t%.5f\n", $dset, $rep, $mmsb_hol;
+		printf "%s\t%d\t%s\t%.5f\n", $dset, $rep, "mmsb", $mmsb_hol;
 	    }
 	    $cmd = sprintf "tail -n10 $d/n%d-k%d-$seed-seed$seed-linksampling/n%d-k%d-$seed-rnodeglm/heldout.txt", $nodes{$dset}, $fixedK{$dset}, $nodes{$dset}, $fixedK{$dset};
 	    my @p = split '\n', `$cmd`;
@@ -190,7 +190,7 @@ sub getresults()
 		    }
 		}
 	    }
-	    printf "%s\t%d\t%.5f\n", $dset, $rep, $mhol;
+	    printf "%s\t%d\t%s\t%.5f\n", $dset, $rep, "amp", $mhol;
 	}
     }
 }
