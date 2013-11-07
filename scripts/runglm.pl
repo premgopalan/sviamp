@@ -49,7 +49,7 @@ sub main() {
     my $dataset = "";
     my $em = 0;
     my $gensets = 0;
-
+    my $getresults = 0;
 
     GetOptions ('file' => \$file,
 		'synthetic' => \$synthetic,
@@ -71,12 +71,15 @@ sub main() {
 		'gensets' => \$gensets,
 		'adagrad' => \$adagrad,
 		'globalmu' => \$globalmu,
-		'allopt' => \$allopt);
+		'allopt' => \$allopt,
+		'getresults' => \$getresults);
     
     open($F, ">cmds.txt");
 
     init();
-    if ($gensets) {
+    if ($getresults) {
+	getresults();
+    } elsif ($gensets) {
 	gensets();
     } elsif ($synthetic) {
 	run_synthetic($mu, $mscale);
@@ -146,6 +149,49 @@ sub gensets()
 	$cmd = sprintf "rm -rf $d; mv n%d-k%d-sets $d", $nodes{$d}, $fixedK{$d};
 	system($cmd);
 	print "CMD = $cmd\n";
+    }
+}
+
+sub getresults()
+{
+    my @dir = split ' ', `ls`;
+    my $repc = 1;
+    my %maprep = ();
+    foreach my $d (@dir) {
+	if ($d =~ /r(\d+)-(\S+)/) {
+	    my $seed = $1;
+	    my $dset = $2;
+	    if (!defined $maprep{$seed}) {
+		$maprep{$seed} = $repc;
+		$repc++;
+	    }
+	    my $rep = $maprep{$seed};
+	    #print "seed = $seed, dataset = $dset\n";
+	    my $cmd = sprintf "tail -n1 $d/n%d-k%d-$seed-seed$seed-linksampling/precision-hol.txt",
+	    $nodes{$dset}, $fixedK{$dset};
+	    my $out = `$cmd`;
+	    #print $out;
+	    if ($out =~ /\d+\s+\d+\s+(\S+).*/) {
+		my $mmsb_hol = $1;
+		printf "%s\t%d\t%.5f\n", $dset, $rep, $mmsb_hol;
+	    }
+	    $cmd = sprintf "tail -n10 $d/n%d-k%d-$seed-seed$seed-linksampling/n%d-k%d-$seed-rnodeglm/heldout.txt", $nodes{$dset}, $fixedK{$dset}, $nodes{$dset}, $fixedK{$dset};
+	    my @p = split '\n', `$cmd`;
+	    my $maxsz = 0;
+	    my $mhol = 0;
+	    foreach my $q (@p) {
+		#print $q . "\n";
+		if ($q =~ /\d+\s+\d+\s+(\S+)\s+(\d+).*/) {
+		    my $sz = $2 + 0;
+		    my $hol = $1 + 0;
+		    if ($sz > $maxsz) {
+			$mhol = $hol;
+			$maxsz = $sz;
+		    }
+		}
+	    }
+	    printf "%s\t%d\t%.5f\n", $dset, $rep, $mhol;
+	}
     }
 }
 
