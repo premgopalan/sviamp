@@ -809,21 +809,17 @@ GLMNetwork::randomnode_infer()
       _lambdat[n] += (_mu1 -_lambda[n]) / SQ(_sigma1);
       for (uint32_t k = 0; k < _k; ++k) {
 	_gammat.add(n, k, _alpha[k] - _gamma.at(n,k));
-#ifdef GAMMA_ADAGRAD
-	if (_env.adagrad)
+	if (_env.gamma_adagrad)
 	  _gammat_ag.add(n,k, _gammat.at(n,k) * _gammat.at(n,k));
-#endif
       }
 
       _rho = pow(_tau0 + _iter, -1 * _kappa);
       _murho = pow(_mutau0 + _iter, -1 * _mukappa);
 
       for (uint32_t k = 0; k < _k; ++k) {
-#ifdef GAMMA_ADAGRAD
-	if (_env.adagrad)
+	if (_env.gamma_adagrad)
 	  _gamma.add(n, k, _gammat.at(n,k) / _gammat_ag.at(n,k));
 	else
-#endif
 	  _gamma.add(n, k, _rho * _gammat.at(n,k));
       }
 
@@ -832,7 +828,7 @@ GLMNetwork::randomnode_infer()
       set_dir_exp(n, _gamma, _Elogpi);
       
       for (uint32_t k = 0; k < _k; ++k) {
-	if (_env.adagrad)
+	if (_env.adagrad || _env.gamma_adagrad)
 	  _mu[k] += _mut[k] / sqrt(_mut_ag[k]);
 	else
 	  _mu[k] += _murho * _mut[k];
@@ -1682,7 +1678,9 @@ GLMNetwork::write_ranking_file()
   uint32_t topN_by_user = 100;
   uint32_t c = 0;
 
-  FILE *f = fopen(Env::file_str("/ranking.tsv").c_str(), "w");
+  FILE *f = 0;
+  if (_save_ranking_file)
+    f = fopen(Env::file_str("/ranking.tsv").c_str(), "w");
   uint32_t ntest_pairs = 0;
   printf("\n+ Precision  map size = %ld\n", _precision_map.size());
   printf("\n+ Writing ranking file for %ld nodes in query file\n", 

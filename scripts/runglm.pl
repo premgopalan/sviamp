@@ -21,9 +21,9 @@ my @datasets = ("ca-AstroPh",
 		"ca-HepPh",
 		"ca-HepTh",
 		"cond-mat-2005",
-		"loc-brightkite_edges",
-		"netscience",
-		"usair");
+		"loc-brightkite_edges");
+#		"netscience",
+#		"usair");
 my %fixedK = ();
 my %hol = ();
 
@@ -149,13 +149,13 @@ sub gensets()
     }
 }
 
-
 sub run_all_datasets()
 {
   LOOP:
     foreach my $d (@datasets) {
 	my $s = $skip ? "-skip" : "";
 	my $cmd = "$glm_script -dataset $d -seed $seed -allopt &";
+	print "CMD = $cmd\n";
 	system($cmd);
     }
 }
@@ -225,17 +225,23 @@ sub run_real($)
 	    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
 	run($cmd);
 
-	$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
-	    "-dir $file -n $N -k $K -glm $opt $load ".
-	    "  -adagrad ".
-	    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
-	run($cmd);
+	#$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
+	#    "-dir $file -n $N -k $K -glm $opt $load ".
+	#    "  -adagrad ".
+	#    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
+	#run($cmd);
+
+	#$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
+	#    "-dir $file -n $N -k $K -glm $opt $load ".
+	#    "  -globalmu ".
+	#    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
+	#run($cmd);
 
 	$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
 	    "-dir $file -n $N -k $K -glm $opt $load ".
-	    "  -globalmu ".
+	    "  -gamma-adagrad ".
 	    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
-	run($cmd);
+	#run($cmd);
     }
 }
 

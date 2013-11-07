@@ -21,8 +21,7 @@
 #define SQ(v) (v * v)
 #define CB(v) (v * v * v)
 
-#define GLOBAL_MU 1
-#define ADAGRAD 0
+#define GAMMA_ADAGRAD 1
 
 class GLMNetwork;
 class LocalCompute {

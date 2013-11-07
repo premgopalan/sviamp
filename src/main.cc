@@ -108,6 +108,7 @@ main(int argc, char **argv)
 
   bool globalmu = false;
   bool adagrad = false;
+  bool gamma_adagrad = false;
 
   if (argc == 1) {
     usage();
@@ -315,6 +316,8 @@ main(int argc, char **argv)
       globalmu = true;
     }  else if (strcmp(argv[i], "-adagrad") == 0) {
       adagrad = true;
+    }  else if (strcmp(argv[i], "-gamma-adagrad") == 0) {
+      gamma_adagrad = true;
     } else {
       fprintf(stdout, "unknown option %s!", argv[i]);
       assert(0);
@@ -341,7 +344,7 @@ main(int argc, char **argv)
 	  acc, lcacc, ngscale, link_thresh,
 	  lt_min_deg, lowconf, nolambda, nmemberships, ammopt, 
 	  onesonly, init_comm, init_comm_fname, node_scaling_on,
-	  lpmode, gtrim, fastinit, max_iterations, globalmu, adagrad);
+	  lpmode, gtrim, fastinit, max_iterations, globalmu, adagrad, gamma_adagrad);
 
   env_global = &env;
   Network network(env);

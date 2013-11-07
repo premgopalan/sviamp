@@ -69,7 +69,7 @@ public:
       bool init_comm, string init_comm_fname,
       bool node_scaling_on, bool lpmode,
       bool gtrim, bool fastinit, uint32_t max_iterations,
-      bool globalmu, bool adagrad);
+      bool globalmu, bool adagrad, bool gamma_agrad);
   ~Env() { fclose(_plogf); }
 
   static string prefix;
@@ -194,6 +194,7 @@ public:
 
   bool globalmu;
   bool adagrad;
+  bool gamma_adagrad;
 
   template<class T> static void plog(string s, const T &v);
   static string file_str(string fname);
@@ -280,7 +281,7 @@ Env::Env(uint32_t N, uint32_t K, bool massive,
 	 uint32_t nmem, bool ammopt, bool oo, bool init_comm,
 	 string init_comm_fname, bool nscaling, bool lpm,
 	 bool gtrim, bool fastinit, uint32_t max_itr,
-	 bool gmu, bool agrad)
+	 bool gmu, bool agrad, bool gamma_agrad)
   : n(N),
     k(K),
     t(2),
@@ -405,7 +406,8 @@ Env::Env(uint32_t N, uint32_t K, bool massive,
     log_training_likelihood(false),
     max_iterations(max_itr),
     globalmu(gmu),
-    adagrad(agrad)
+    adagrad(agrad),
+    gamma_adagrad(gamma_agrad)
 {
   assert (!(batch && (strat || rnode || rpair)));
 
@@ -481,6 +483,9 @@ Env::Env(uint32_t N, uint32_t K, bool massive,
 
     if (adagrad)
       sa << "-agrad";
+
+    if (gamma_adagrad)
+      sa << "-gagrad";
 
     if (globalmu)
       sa << "-gmu";
