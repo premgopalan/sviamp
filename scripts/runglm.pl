@@ -155,7 +155,7 @@ sub gensets()
 sub getresults()
 {
     my @dir = split ' ', `ls`;
-    my $repc = 1;
+    my $repc = 3;
     my %maprep = ();
     foreach my $d (@dir) {
 	if ($d =~ /r(\d+)-(\S+)/) {
