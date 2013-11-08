@@ -887,6 +887,7 @@ GLMNetwork::do_on_stop()
   write_ranking_file();
   _save_ranking_file = false;
   save_groups();
+  compute_and_log_groups();
 }
 
 void
@@ -1562,6 +1563,7 @@ GLMNetwork::compute_and_log_groups()
   fprintf(f, "graph\n[\n\tdirected 0\n");
   fflush(f);
 
+
   for (uint32_t i = 0; i < _n; ++i) {
     const IDMap &m = _network.seq2id();
     IDMap::const_iterator idt = m.find(i);
@@ -1570,7 +1572,7 @@ GLMNetwork::compute_and_log_groups()
     fprintf(f, "\tnode\n\t[\n");
     fprintf(f, "\t\tid %d\n", i);
     fprintf(f, "\t\textid %d\n", idt->second);
-    fprintf(f, "\t\tpopularity %d\n", (int)(100 * _lambda[i]));
+    fprintf(f, "\t\tpopularity %.5f\n", exp(_lambda[i]));
     fprintf(f, "\t\tgroup %d\n", most_likely_group(i));
     fprintf(f, "\t]\n");
     fflush(f);

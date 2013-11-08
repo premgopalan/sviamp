@@ -16,14 +16,19 @@ my $findk = 0;
 my $datasets_dir = "/disk/scratch1/prem/nodepop/datasets";
 my $seed = 2;
 
-my @datasets = ("ca-AstroPh",
-		"ca-GrQc",
-		"ca-HepPh",
-		"ca-HepTh",
-		"cond-mat-2005",
-		"loc-brightkite_edges");
-#		"netscience",
-#		"usair");
+# my @datasets = ("ca-AstroPh",
+# 		"ca-GrQc",
+# 		"ca-HepPh",
+# 		"ca-HepTh",
+# 		"cond-mat-2005",
+# 		"loc-brightkite_edges");
+# 		"netscience",
+# 		"usair");
+
+my @datasets = ("ca-GrQc",
+		"nslcc",
+		"usair",
+		"poblogs");
 my %fixedK = ();
 my %hol = ();
 
@@ -117,6 +122,7 @@ sub init()
     $nodes{"netscience"}  = 1461;
     $nodes{"usair"} = 712;
     $nodes{"nslcc"} = 379;
+    $nodes{"poblogs"} = 1224;
 
     $fixedK{"ca-AstroPh"} = 100;
     $fixedK{"ca-GrQc"} = 100;
@@ -127,6 +133,7 @@ sub init()
     $fixedK{"netscience"}  = 50;
     $fixedK{"usair"} = 20;
     $fixedK{"nslcc"} = 20;
+    $fixedK{"poblogs"} = 2;
 
     $hol{"ca-AstroPh"} = 0.01;
     $hol{"ca-GrQc"} = 0.01;
@@ -136,7 +143,8 @@ sub init()
     $hol{"loc-brightkite_edges"} = 0.01;
     $hol{"netscience"}  = 0.1;
     $hol{"usair"} = 0.1;
-    #$hol{"nslcc"} = 0.1;
+    $hol{"nslcc"} = 0.1;
+    $hol{"poblogs"} = 0.1;
 }
 
 sub gensets()
@@ -152,10 +160,19 @@ sub gensets()
     }
 }
 
+sub gensets2($$$$$)
+{
+    my ($topdir, $file, $N, $K, $dir) = @_;
+    my $cmd = "$eval_bin -gen-heldout -file $file -n $N -k $K -label sets";
+    system($cmd);
+    $cmd = sprintf "mv n%d-k%d-sets $topdir/$dir", $N, $K;
+    system($cmd);
+}
+
 sub getresults()
 {
     my @dir = split ' ', `ls`;
-    my $repc = 3;
+    my $repc = 1;
     my %maprep = ();
     foreach my $d (@dir) {
 	if ($d =~ /r(\d+)-(\S+)/) {
@@ -175,7 +192,7 @@ sub getresults()
 		my $mmsb_hol = $1;
 		printf "%s\t%d\t%s\t%.5f\n", $dset, $rep, "mmsb", $mmsb_hol;
 	    }
-	    $cmd = sprintf "tail -n10 $d/n%d-k%d-$seed-seed$seed-linksampling/n%d-k%d-$seed-rnodeglm/heldout.txt", $nodes{$dset}, $fixedK{$dset}, $nodes{$dset}, $fixedK{$dset};
+	    $cmd = sprintf "tail -n10 $d/n%d-k%d-$seed-seed$seed-linksampling/n%d-k%d-$seed-rnodeglm-gmu/heldout.txt", $nodes{$dset}, $fixedK{$dset}, $nodes{$dset}, $fixedK{$dset};
 	    my @p = split '\n', `$cmd`;
 	    my $maxsz = 0;
 	    my $mhol = 0;
@@ -269,7 +286,7 @@ sub run_real($)
 	$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
 	    "-dir $file -n $N -k $K -glm $opt $load ".
 	    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
-	run($cmd);
+	#run($cmd);
 
 	#$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
 	#    "-dir $file -n $N -k $K -glm $opt $load ".
@@ -285,27 +302,28 @@ sub run_real($)
 
 	$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
 	    "-dir $file -n $N -k $K -glm $opt $load ".
-	    "  -gamma-adagrad ".
 	    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
-	#run($cmd);
+	run($cmd);
     }
 }
 
 sub run_all()
 {
-    for (my $mu = 0; $mu <= 0.6; $mu += 0.2) {
+    for (my $mu = 0; $mu <= 0.4; $mu += 0.2) {
 	#my $mu = 0.6;
-	foreach my $mscale (3,4,5,7) {
+	foreach my $mscale (1,2,3,4) {
 	    my $cmd = "$glm_script -synthetic -mu $mu -mscale $mscale &";
-	    system($cmd);
+	    run($cmd);
+	    sleep(1);
 	}
     }
+OUT:
 }
 
 sub check_all()
 {
     for (my $mu = 0; $mu <= 0.4; $mu += 0.2) {
-	foreach my $mscale (1,2,3,4,5,6,7,8) {
+	foreach my $mscale (2,3,4,5,6,7,8) {
 	    check_synthetic($seed, $mu, $mscale);
 	}
     }
@@ -370,7 +388,7 @@ sub run_synthetic($$)
     my $file = "network.dat";
 
     my $cmd = "cd $dir; ".
-	"$svinet_bin -file $file -n $N -k $N -fastinit ".
+	"$svinet_bin -file $file -n $N -k $N -findk ".
 	" -nmi community.dat -bmark 2>&1 >> inf.out";
     run($cmd);
 
@@ -380,29 +398,26 @@ sub run_synthetic($$)
 	$cmd = "wc -l $dir/ground_truth.txt";
     }
     my $K = getK(`$cmd`);
+
+    gensets2($dir, "$dir/network.dat", $N, $K, "sets");
     
     $cmd = "cd $dir; ".
-	"$svinet_bin -file $file -n $N -k $K  -batch -annealing -rfreq 1".
+	"$svinet_bin -dir sets -n $N -k $K  -link-sampling -svip-mode -rfreq 10".
 	" -lt-min-deg $lt -link-thresh 0.9".
 	" -max-iterations 100 -nmi community.dat -bmark 2>&1 >> inf.out";
     run($cmd);
 
-    $cmd = "cd $dir/n$N-k$K-mmsb-batch-ann; ".
-	"$svinet_bin -file ../$file -n $N -k $K -batch -rfreq 1".
+    $cmd = "cd $dir/n$N-k$K-mmsb-linksampling; ".
+	"$glm_bin -dir ../../$dir/sets -n $N -k $K -glm -rnode -load 1 1 ".
 	" -lt-min-deg $lt -link-thresh 0.9".
-	" -max-iterations 100 -load 1 1 -nmi ../community.dat -bmark 2>&1 >> inf.out";
+	" -nmi ../community.dat -bmark -rfreq 10 -globalmu 2>&1 >> inf.out &";
     run($cmd);
 
-    $cmd = "cd $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch; ".
-	"$glm_bin -file ../../$file -n $N -k $K -glm -rpair -max-iterations 3000 -load 1 1 ".
+    $cmd = "cd $dir/n$N-k$K-mmsb-linksampling; ".
+	"$glm_bin -dir ../../$dir/sets -n $N -k $K -glm -rnode -load 1 1 ".
+	" -globalmu ".
 	" -lt-min-deg $lt -link-thresh 0.9".
-	" -nmi ../../community.dat -bmark 2>&1 >> inf.out &";
-    run($cmd);
-
-    $cmd = "cd $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch; ".
-	"$glm_bin -file ../../$file -n $N -k $K -glm -rpair -max-iterations 3000 -load 1 1 ".
-	" -lt-min-deg $lt -link-thresh 0.9".
-	" -nmi ../../community.dat -bmark -nolambda 2>&1 >> inf.out &";
+	" -nmi ../community.dat -bmark -rfreq 10 -globalmu 2>&1 >> inf.out &";
     run($cmd);
 }
 
