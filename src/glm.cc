@@ -1141,7 +1141,7 @@ GLMNetwork::heldout_likelihood(bool nostop)
   double a = nshol;
   bool stop = false;
   int why = -1;
-  if (_iter > 1000) {
+  if (_iter > 100) {
     if (a > _prev_h && _prev_h != 0 && fabs((a - _prev_h) / _prev_h) < 0.00001) {
       stop = true;
       why = 100;

@@ -25,8 +25,10 @@ my $seed = 2;
 # 		"netscience",
 # 		"usair");
 
-my @datasets = ("ca-GrQc",
-		"nslcc",
+
+my @datasets = ("netscience",
+		"ca-GrQc",
+#		"nslcc",
 		"usair",
 		"poblogs");
 my %fixedK = ();
@@ -130,7 +132,7 @@ sub init()
     $fixedK{"ca-HepTh"} = 100;
     $fixedK{"cond-mat-2005"} = 100;
     $fixedK{"loc-brightkite_edges"} = 100;
-    $fixedK{"netscience"}  = 50;
+    $fixedK{"netscience"}  = 100;
     $fixedK{"usair"} = 20;
     $fixedK{"nslcc"} = 20;
     $fixedK{"poblogs"} = 2;
@@ -302,6 +304,7 @@ sub run_real($)
 
 	$cmd = "cd $dir/n$N-k$K-$label-seed$seed-linksampling; $glm_bin ".
 	    "-dir $file -n $N -k $K -glm $opt $load ".
+	    " -globalmu ".
 	    " -label $label -seed $seed -rfreq $rfreq -max-iterations 100000 2>&1 >> inf.out &";
 	run($cmd);
     }
@@ -311,8 +314,8 @@ sub run_all()
 {
     for (my $mu = 0; $mu <= 0.4; $mu += 0.2) {
 	#my $mu = 0.6;
-	foreach my $mscale (1,2,3,4) {
-	    my $cmd = "$glm_script -synthetic -mu $mu -mscale $mscale &";
+	foreach my $mscale (2,4,6,8) {
+	    my $cmd = "$glm_script -synthetic -mu $mu -mscale $mscale -seed $seed &";
 	    run($cmd);
 	    sleep(1);
 	}
@@ -322,8 +325,9 @@ OUT:
 
 sub check_all()
 {
+    print "\"dataset\"\t\"seed\"\t\"mu\"\t\"mscale\"\t\"p10\"\t\"p50\"\t\"p100\"\n";
     for (my $mu = 0; $mu <= 0.4; $mu += 0.2) {
-	foreach my $mscale (2,3,4,5,6,7,8) {
+	foreach my $mscale (2,4,6,8) {
 	    check_synthetic($seed, $mu, $mscale);
 	}
     }
@@ -348,8 +352,8 @@ sub run_synthetic($$)
     my $N = 1000;
     my $ovlap = 0.5;
     my $numovlap = 4;
-    my $minc = 20;
-    my $maxc = 50;
+    my $minc = 200;
+    my $maxc = 500;
     my $deg_per_comm = 10;
     my $initseed = 21111984 + $seed;
 
@@ -410,7 +414,7 @@ sub run_synthetic($$)
     $cmd = "cd $dir/n$N-k$K-mmsb-linksampling; ".
 	"$glm_bin -dir ../../$dir/sets -n $N -k $K -glm -rnode -load 1 1 ".
 	" -lt-min-deg $lt -link-thresh 0.9".
-	" -nmi ../community.dat -bmark -rfreq 10 -globalmu 2>&1 >> inf.out &";
+	" -nmi ../community.dat -bmark -rfreq 10 2>&1 >> inf.out &";
     run($cmd);
 
     $cmd = "cd $dir/n$N-k$K-mmsb-linksampling; ".
@@ -444,31 +448,12 @@ sub check_synthetic($$$)
 	die "cannot find K (got $K)\n";
     }
 
-    my $roc_auc = `grep ROC $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch/n$N-k$K-xx-rpairglm/auc-all.txt`;
-    if ($roc_auc =~  /ROC\s+(\S+)/) {
-	$roc_auc = $1 + 0;
-    }
-    my $pr_auc = `grep PR $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch/n$N-k$K-xx-rpairglm/auc-all.txt`;
-    if ($pr_auc =~ /AUC\-PR\s+(\S+)/) {
-	$pr_auc = $1 + 0;
-    }
-    my $roc_auc_nl = `grep ROC $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch/n$N-k$K-xx-rpairglm-nolambda/auc-all.txt`;
-    if ($roc_auc_nl =~  /ROC\s+(\S+)/) {
-	$roc_auc_nl = $1 + 0;
-    }
-    my $pr_auc_nl = `grep PR $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch/n$N-k$K-xx-rpairglm-nolambda/auc-all.txt`;
-    if ($pr_auc_nl =~ /AUC\-PR\s+(\S+)/) {
-	$pr_auc_nl = $1 + 0;
-    }
-    my $nmi = `tail -n1 $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch/n$N-k$K-xx-rpairglm/mutual.txt`;
-    if ($nmi =~ /mutual3:\s+(\S+)/) {
-	$nmi = $1 + 0;
-    }
-    my $nmi_nl = `tail -n1 $dir/n$N-k$K-mmsb-batch-ann/n$N-k$K-mmsb-batch/n$N-k$K-xx-rpairglm-nolambda/mutual.txt`;
-    if ($nmi_nl =~ /mutual3:\s+(\S+)/) {
-	$nmi_nl = $1 + 0;
-    }
-    print "$mu $mscale $roc_auc $roc_auc_nl $pr_auc $pr_auc_nl $nmi $nmi_nl\n";
+    my $dset1 = "mmsb";
+    my $prec1 = `tail -n1 $dir/n$N-k$K-mmsb-linksampling/precision.txt`;
+    my $dset2 = "amp";
+    my $prec2 = `tail -n1 $dir/n$N-k$K-mmsb-linksampling/n$N-k$K-xx-rnodeglm/precision.txt`;
+    print "$dset1\t$seed\t$mu\t$mscale\t$prec1";
+    print "$dset2\t$seed\t$mu\t$mscale\t$prec2";
 }
 
 
