@@ -24,3 +24,6 @@ P. Gopalan, C. Wang, and D.M. Blei. Modeling Overlapping Communities
 with Node Popularities. To appear in NIPS 2013.
 
 (more readme to follow)
+
+[![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/premgopalan/sviamp/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
+
